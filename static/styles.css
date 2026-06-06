@@ -1,0 +1,20 @@
+.scrollbar-hide::-webkit-scrollbar { 
+    display: none; 
+}
+.scrollbar-hide { 
+    -ms-overflow-style: none; 
+    scrollbar-width: none; 
+}
+.pb-safe { 
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); 
+}
+.pt-safe { 
+    padding-top: max(0.75rem, env(safe-area-inset-top)); 
+}
+select.emoji-picker {
+    -webkit-appearance: none;
+    appearance: none;
+    text-align: center;
+    padding-right: 0;
+    background-image: none;
+}

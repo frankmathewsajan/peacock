@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1.0,user-scalable=no,viewport-fit=cover" />
+    <title>Peacock Engine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+
+<body class="h-[100dvh] w-full bg-slate-50 text-slate-900 overflow-hidden flex flex-col font-sans">
+
+    <header class="p-4 bg-white border-b border-slate-200 shrink-0 z-10 pt-safe">
+        <div class="flex justify-between items-center mb-1.5">
+            <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">API Token Usage</span>
+            <div class="flex items-center gap-2">
+                <span id="token-text" class="text-[11px] font-semibold text-slate-500 uppercase tracking-wider select-none transition-all">0 / 1,000,000</span>
+                <button id="refresh-btn" class="text-slate-400 hover:text-slate-600 active:scale-90 transition p-1 rounded-md cursor-pointer touch-none">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                </button>
+            </div>
+        </div>
+        <div class="h-1 w-full bg-slate-100 rounded-full overflow-hidden">
+            <div id="token-fill" class="h-full bg-slate-900 transition-all duration-500 ease-out w-0"></div>
+        </div>
+    </header>
+
+    <main id="feed" class="flex-1 overflow-y-auto p-4 space-y-3 scroll-smooth bg-slate-50 w-full">
+        </main>
+
+    <footer class="bg-white border-t border-slate-200 p-3 pt-4 shrink-0 shadow-[0_-8px_24px_-6px_rgba(0,0,0,0.04)] z-10 pb-safe w-full">
+        
+        <div id="draft-gallery" class="flex gap-2 overflow-x-auto pb-3 hidden scrollbar-hide w-full"></div>
+
+        <div class="flex flex-col gap-3 mb-3 w-full">
+            
+            <div class="flex justify-between items-center gap-2">
+                
+                <div class="flex bg-slate-100 p-1 rounded-lg border border-slate-200 shrink-0">
+                    <button id="model-fast" onclick="setModel('fast')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded-md bg-white shadow-sm text-slate-800 transition">Fast</button>
+                    <button id="model-deep" onclick="setModel('deep')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded-md text-slate-400 transition hover:text-slate-600">Deep</button>
+                </div>
+
+                <div class="flex bg-slate-100 p-1 rounded-lg border border-slate-200 shrink-0">
+                    <button id="mode-manual" onclick="setMode('manual')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded-md bg-white shadow-sm text-slate-800 transition">Manual</button>
+                    <button id="mode-auto" onclick="setMode('auto')" class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider rounded-md text-slate-400 transition hover:text-slate-600">Auto</button>
+                </div>
+            </div>
+
+            <div class="flex justify-between items-center gap-2 w-full">
+                <div id="prompts-container" class="flex-1 flex gap-2">
+                    </div>
+                <button onclick="openConfigModal()" class="shrink-0 w-11 h-11 flex items-center justify-center bg-slate-100 text-slate-500 hover:text-slate-800 rounded-xl transition active:scale-95 border border-slate-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="flex gap-2 w-full items-center">
+            <button id="capture" class="shrink-0 h-12 px-4 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 text-sm font-semibold active:scale-[0.96] transition flex items-center justify-center gap-2 shadow-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+                Capture
+            </button>
+            <form id="form" class="flex-1 flex gap-2 min-w-0">
+                <input id="input" autocomplete="off" class="flex-1 min-w-0 h-12 px-3.5 rounded-xl border border-slate-200 bg-slate-50 text-sm outline-none focus:ring-1 focus:ring-slate-400 focus:bg-white transition" placeholder="Query context..." />
+                <button id="send-btn" type="submit" class="shrink-0 h-12 w-12 flex items-center justify-center rounded-xl bg-slate-900 text-white active:scale-[0.96] transition shadow-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
+            </form>
+        </div>
+    </footer>
+
+    <div id="config-modal" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-200">
+        <div class="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl transform scale-95 transition-transform duration-200 max-h-[85vh] overflow-y-auto">
+            <h3 class="font-bold text-slate-800 mb-4">Engine Configuration</h3>
+            
+            <div class="mb-5 border-b border-slate-100 pb-5">
+                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">Auto-Fire Prompt</label>
+                <input id="auto-prompt" class="w-full border border-indigo-200 bg-indigo-50 rounded-lg p-2.5 text-sm outline-none focus:border-indigo-400" placeholder="Default execute command...">
+            </div>
+
+            <div class="space-y-3 mb-6">
+                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">Manual Presets (4 Slots)</label>
+                
+                <div class="flex gap-2">
+                    <select id="p1-emoji" class="emoji-picker w-12 rounded-lg border border-slate-200 bg-slate-50 text-base outline-none focus:border-slate-400 cursor-pointer"></select>
+                    <input id="p1-text" class="flex-1 border border-slate-200 rounded-lg p-2 text-sm outline-none focus:border-slate-400" placeholder="Preset 1 text...">
+                </div>
+                <div class="flex gap-2">
+                    <select id="p2-emoji" class="emoji-picker w-12 rounded-lg border border-slate-200 bg-slate-50 text-base outline-none focus:border-slate-400 cursor-pointer"></select>
+                    <input id="p2-text" class="flex-1 border border-slate-200 rounded-lg p-2 text-sm outline-none focus:border-slate-400" placeholder="Preset 2 text...">
+                </div>
+                <div class="flex gap-2">
+                    <select id="p3-emoji" class="emoji-picker w-12 rounded-lg border border-slate-200 bg-slate-50 text-base outline-none focus:border-slate-400 cursor-pointer"></select>
+                    <input id="p3-text" class="flex-1 border border-slate-200 rounded-lg p-2 text-sm outline-none focus:border-slate-400" placeholder="Preset 3 text...">
+                </div>
+                <div class="flex gap-2">
+                    <select id="p4-emoji" class="emoji-picker w-12 rounded-lg border border-slate-200 bg-slate-50 text-base outline-none focus:border-slate-400 cursor-pointer"></select>
+                    <input id="p4-text" class="flex-1 border border-slate-200 rounded-lg p-2 text-sm outline-none focus:border-slate-400" placeholder="Preset 4 text...">
+                </div>
+            </div>
+
+            <div class="flex gap-2 justify-end">
+                <button onclick="closeConfigModal()" class="px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg text-sm transition hover:bg-slate-200">Cancel</button>
+                <button onclick="saveConfig()" class="px-4 py-2 bg-slate-900 text-white font-semibold rounded-lg text-sm transition hover:bg-slate-800">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal" class="fixed inset-0 bg-white z-50 flex flex-col transform translate-y-full transition-transform duration-300 ease-in-out">
+        <div class="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 shrink-0 pt-safe">
+            <h2 class="font-semibold text-sm text-slate-700 uppercase tracking-wider">Analysis Output</h2>
+            <button onclick="closeModal()" class="h-9 px-4 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg font-bold text-xs transition active:scale-95">
+                Close
+            </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-5 bg-white pb-safe">
+            <article id="modal-content" class="prose prose-slate prose-sm max-w-none prose-headings:font-semibold prose-pre:bg-slate-900 text-slate-800 leading-relaxed"></article>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

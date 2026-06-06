@@ -1,6 +1,7 @@
 import io
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles  # NEW IMPORT
 from pydantic import BaseModel
 import uvicorn
 import mss
@@ -12,6 +13,9 @@ from chat_agent import analyze_screen
 
 app = FastAPI()
 
+# NEW: Mount the static directory to serve JS and CSS files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 SESSION_IMAGES: list[Image.Image] = []
 
 
@@ -22,7 +26,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 async def get():
-    with open("./index.html", "r", encoding="utf-8") as f:
+    with open("./static/index.html", "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
 
