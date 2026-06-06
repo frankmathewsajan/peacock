@@ -59,6 +59,13 @@ let autoFirePrompt = localStorage.getItem('auto_prompt') || "Analyze this screen
 // --- Boot Sequence ---
 async function init() {
     populateEmojiPickers();
+
+    try {
+        const res = await fetch("/tokens");
+        const data = await res.json();
+        localStorage.setItem('token_tracker', data.total_tokens);
+    } catch(e) { console.error("Could not sync tokens", e); }
+
     transactionHistory = await store.getItem('history_stack') || [];
     renderPrompts();
     updateTokenTelemetry();
@@ -111,12 +118,12 @@ function refreshDynamicUI() {
             sendBtn.classList.remove('hidden');
             captureBtn.classList.remove('bg-slate-900', 'text-white');
             captureBtn.classList.add('bg-slate-100', 'text-slate-700');
-            captureText.innerText = "Add Frame";
+            captureText.innerText = "Capture";
         } else {
             sendBtn.classList.add('hidden');
             captureBtn.classList.remove('bg-slate-100', 'text-slate-700');
             captureBtn.classList.add('bg-slate-900', 'text-white');
-            captureText.innerText = "Start Batch Capture";
+            captureText.innerText = "Capture";
         }
     }
 }
@@ -148,6 +155,12 @@ window.handlePresetClick = function(presetText) {
             executeInference(presetText, currentModel);
         }
     }
+}
+
+window.removeDraftBlob = function(index) {
+    temporaryBlobs.splice(index, 1);
+    renderDraftPreviewRow();
+    refreshDynamicUI();
 }
 
 // --- WebSocket Handlers ---
@@ -185,14 +198,23 @@ function renderDraftPreviewRow() {
         return;
     }
     draftGallery.classList.remove('hidden');
-    temporaryBlobs.forEach(blob => {
+    temporaryBlobs.forEach((blob, index) => {
         const url = URL.createObjectURL(blob);
         const wrapper = document.createElement('div');
         wrapper.className = "relative h-14 w-20 shrink-0 border border-slate-200 rounded-lg overflow-hidden bg-slate-100";
+        
         const img = document.createElement('img');
         img.src = url;
         img.className = "h-full w-full object-cover";
+        
+        // Delete button for drafts
+        const delBtn = document.createElement('button');
+        delBtn.className = "absolute top-0.5 right-0.5 bg-black/50 text-white rounded-full p-0.5 hover:bg-red-500 transition";
+        delBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+        delBtn.onclick = () => removeDraftBlob(index);
+        
         wrapper.appendChild(img);
+        wrapper.appendChild(delBtn);
         draftGallery.appendChild(wrapper);
     });
 }
@@ -365,8 +387,7 @@ async function executeInference(queryText, executionModel) {
         
         const data = await res.json();
         
-        let totalSpent = parseInt(localStorage.getItem('token_tracker') || '0', 10);
-        localStorage.setItem('token_tracker', totalSpent + data.tokens);
+        localStorage.setItem('token_tracker', data.total_tokens);
         updateTokenTelemetry();
 
         const contextRecord = {
@@ -395,8 +416,11 @@ async function executeInference(queryText, executionModel) {
         sendBtn.disabled = false;
         buttons.forEach(b => b.disabled = false);
         
-        if(currentMode === 'single') captureBtn.innerHTML = originalCaptureHTML;
-        sendBtn.innerHTML = originalBtnHTML;
+        if(currentMode === 'single') {
+             captureBtn.innerHTML = originalCaptureHTML;
+        } else {
+             sendBtn.innerHTML = originalBtnHTML;
+        }
     }
 }
 

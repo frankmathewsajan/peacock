@@ -1,10 +1,12 @@
 import io
+import socket
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles  # NEW IMPORT
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 import mss
+import qrcode
 from PIL import Image
 from dotenv import load_dotenv
 
@@ -13,7 +15,6 @@ from chat_agent import analyze_screen
 
 app = FastAPI()
 
-# NEW: Mount the static directory to serve JS and CSS files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 SESSION_IMAGES: list[Image.Image] = []
@@ -30,24 +31,35 @@ async def get():
         return HTMLResponse(f.read())
 
 
+TOTAL_TOKENS_USED = 0
+
+
+@app.get("/tokens")
+async def get_tokens():
+    return {"total_used": TOTAL_TOKENS_USED}
+
+
 @app.post("/chat")
 async def process_chat(request: ChatRequest):
-    global SESSION_IMAGES
+    global SESSION_IMAGES, TOTAL_TOKENS_USED
 
     if not SESSION_IMAGES and not request.message:
         return {
             "response": "System Error: Prompt or capture context required.",
-            "tokens": 0,
+            "total_tokens": TOTAL_TOKENS_USED,
         }
 
-    # Pass the model tier to the agent router
     answer, tokens_used = analyze_screen(
         request.message, SESSION_IMAGES, request.model_tier
     )
 
+    TOTAL_TOKENS_USED += tokens_used
     SESSION_IMAGES.clear()
 
-    return {"response": answer, "tokens": tokens_used}
+    return {
+        "response": answer,
+        "total_tokens": TOTAL_TOKENS_USED,
+    }
 
 
 @app.websocket("/stream")
@@ -74,14 +86,43 @@ async def capture_on_demand(websocket: WebSocket):
                     await websocket.send_bytes(buffer.getvalue())
 
         except WebSocketDisconnect:
-            print("WebSocket connection dropped by client.")
+            pass
         except Exception as e:
-            print(f"WebSocket Error: {e}")
+            print(f"Stream error: {e}")
             try:
                 await websocket.close()
             except RuntimeError:
                 pass
 
 
+def get_local_ip():
+    """
+    Creates a dummy socket connection to resolve the preferred local IP address.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = 8000
+    local_ip = get_local_ip()
+    target_url = f"http://{local_ip}:{port}"
+
+    print("Ensure both devices are on the same local network.")
+    print(f"\nDashboard URL: {target_url}\n")
+
+    qr = qrcode.QRCode(version=1, box_size=1, border=2)
+    qr.add_data(target_url)
+    qr.make(fit=True)
+    qr.print_ascii(invert=True)
+
+    print("\nStarting server...\n")
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
