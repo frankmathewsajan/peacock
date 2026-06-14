@@ -20,7 +20,6 @@ let pendingExecutionPrompt = null;
 let currentModalText = ""; 
 let isTypingPaused = false; 
 
-// Icons for the typing state toggle
 const pauseIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
 const playIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
 
@@ -184,7 +183,6 @@ window.openRemoteModal = function() {
     document.getElementById('active-type-controls').classList.add('hidden');
     isTypingPaused = false;
     
-    // Reset icon to Pause
     const pBtn = document.getElementById('pause-type-btn');
     pBtn.innerHTML = pauseIcon;
     pBtn.classList.replace('bg-emerald-500', 'bg-amber-500');
@@ -219,12 +217,12 @@ window.togglePauseType = function() {
     if (!isTypingPaused) {
         ws.send(JSON.stringify({ action: "PAUSE_TYPE" }));
         isTypingPaused = true;
-        btn.innerHTML = playIcon; // Swap to Play icon
+        btn.innerHTML = playIcon; 
         btn.classList.replace('bg-amber-500', 'bg-emerald-500');
     } else {
         ws.send(JSON.stringify({ action: "RESUME_TYPE" }));
         isTypingPaused = false;
-        btn.innerHTML = pauseIcon; // Swap back to Pause icon
+        btn.innerHTML = pauseIcon; 
         btn.classList.replace('bg-emerald-500', 'bg-amber-500');
     }
 }
@@ -521,10 +519,10 @@ window.showModalContent = function(id) {
 window.copyModalContent = function() {
     if (!currentModalText) return;
     
-    navigator.clipboard.writeText(currentModalText).then(() => {
-        const btn = document.querySelector('#modal button[onclick="copyModalContent()"]');
-        const oldHtml = btn.innerHTML;
-        
+    const btn = document.querySelector('#modal button[onclick="copyModalContent()"]');
+    const oldHtml = btn.innerHTML;
+    
+    const successUI = () => {
         btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!`;
         btn.classList.replace('text-indigo-700', 'text-emerald-600');
         btn.classList.replace('border-indigo-200', 'border-emerald-200');
@@ -534,7 +532,28 @@ window.copyModalContent = function() {
             btn.classList.replace('text-emerald-600', 'text-indigo-700');
             btn.classList.replace('border-emerald-200', 'border-indigo-200');
         }, 1500);
-    });
+    };
+
+    // Use modern clipboard if Secure Context, fallback to legacy if HTTP/Local IP
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(currentModalText).then(successUI);
+    } else {
+        let textArea = document.createElement("textarea");
+        textArea.value = currentModalText;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+            document.execCommand('copy');
+            successUI();
+        } catch (err) {
+            console.error('Fallback copy failed', err);
+            alert("Secure copy blocked over HTTP. Please long-press text to copy manually.");
+        }
+        document.body.removeChild(textArea);
+    }
 }
 
 window.closeModal = function() {
