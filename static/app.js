@@ -17,8 +17,12 @@ let tokenFormat = 'raw';
 let currentModel = 'fast';
 let currentMode = 'single'; 
 let pendingExecutionPrompt = null;
-let currentModalText = ""; // Holds raw text for copying
-let isTypingPaused = false; // State for UI toggle
+let currentModalText = ""; 
+let isTypingPaused = false; 
+
+// Icons for the typing state toggle
+const pauseIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>`;
+const playIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
 
 const natureEmojis = [
     '🦚', '🌿', '🪴', '🌲', '🌸', 
@@ -169,7 +173,6 @@ window.removeDraftBlob = function(index) {
     refreshDynamicUI();
 }
 
-// --- Remote Injection Logic ---
 window.openRemoteModal = function() {
     const rm = document.getElementById('remote-modal');
     rm.classList.remove('opacity-0', 'pointer-events-none');
@@ -177,12 +180,14 @@ window.openRemoteModal = function() {
     document.getElementById('remote-text').value = '';
     document.getElementById('remote-text').focus();
     
-    // Reset typing UI state
     document.getElementById('injection-controls').classList.remove('hidden');
     document.getElementById('active-type-controls').classList.add('hidden');
     isTypingPaused = false;
-    document.getElementById('pause-type-btn').innerText = "Pause Typing";
-    document.getElementById('pause-type-btn').classList.replace('bg-emerald-500', 'bg-amber-500');
+    
+    // Reset icon to Pause
+    const pBtn = document.getElementById('pause-type-btn');
+    pBtn.innerHTML = pauseIcon;
+    pBtn.classList.replace('bg-emerald-500', 'bg-amber-500');
 }
 
 window.closeRemoteModal = function() {
@@ -196,7 +201,6 @@ window.sendRemoteType = function() {
     if (ws.readyState === 1 && txt) {
         ws.send(JSON.stringify({ action: "TYPE", text: txt }));
         
-        // Swap to the pause/stop interface instead of closing modal
         document.getElementById('injection-controls').classList.add('hidden');
         document.getElementById('active-type-controls').classList.remove('hidden');
     }
@@ -215,12 +219,12 @@ window.togglePauseType = function() {
     if (!isTypingPaused) {
         ws.send(JSON.stringify({ action: "PAUSE_TYPE" }));
         isTypingPaused = true;
-        btn.innerText = "Resume Typing";
+        btn.innerHTML = playIcon; // Swap to Play icon
         btn.classList.replace('bg-amber-500', 'bg-emerald-500');
     } else {
         ws.send(JSON.stringify({ action: "RESUME_TYPE" }));
         isTypingPaused = false;
-        btn.innerText = "Pause Typing";
+        btn.innerHTML = pauseIcon; // Swap back to Pause icon
         btn.classList.replace('bg-emerald-500', 'bg-amber-500');
     }
 }
@@ -230,7 +234,6 @@ window.stopRemoteType = function() {
     window.closeRemoteModal();
 }
 
-// --- WebSocket Resolution ---
 ws.onmessage = async (e) => {
     if (typeof e.data === 'string') {
         try {
@@ -238,8 +241,8 @@ ws.onmessage = async (e) => {
             if (data.type === "extracted_text") {
                 const contextRecord = {
                     id: Date.now(),
-                    prompt: "Clipboard Extraction",
-                    model: "System",
+                    prompt: "Screen Text Extraction (Ctrl+A, Ctrl+C)",
+                    model: "Clipboard",
                     images: [],
                     response: data.content
                 };
@@ -263,7 +266,6 @@ ws.onmessage = async (e) => {
     }
 };
 
-// --- View Renderers ---
 function renderPrompts() {
     const container = document.getElementById('prompts-container');
     container.innerHTML = '';
@@ -507,11 +509,10 @@ async function executeInference(queryText, executionModel) {
     }
 }
 
-// --- Display Modal with Copy Feature ---
 window.showModalContent = function(id) {
     const target = transactionHistory.find(item => item.id === id);
     if (target) {
-        currentModalText = target.response; // Stage raw text for copying
+        currentModalText = target.response; 
         document.getElementById('modal-content').innerHTML = marked.parse(target.response);
         modal.classList.remove('translate-y-full');
     }
@@ -521,11 +522,9 @@ window.copyModalContent = function() {
     if (!currentModalText) return;
     
     navigator.clipboard.writeText(currentModalText).then(() => {
-        // Find the copy button by looking for its SVG child, or give it an ID
         const btn = document.querySelector('#modal button[onclick="copyModalContent()"]');
         const oldHtml = btn.innerHTML;
         
-        // Provide visual confirmation
         btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!`;
         btn.classList.replace('text-indigo-700', 'text-emerald-600');
         btn.classList.replace('border-indigo-200', 'border-emerald-200');
@@ -540,8 +539,7 @@ window.copyModalContent = function() {
 
 window.closeModal = function() {
     modal.classList.add('translate-y-full');
-    currentModalText = ""; // Clear staged text
+    currentModalText = ""; 
 }
 
-// Initialize boot
 init();

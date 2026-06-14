@@ -95,8 +95,12 @@
             </div>
 
             <div id="active-type-controls" class="hidden flex gap-2 w-full">
-                <button id="pause-type-btn" onclick="togglePauseType()" class="flex-1 py-2.5 bg-amber-500 text-white font-bold uppercase tracking-wide rounded-lg text-sm transition shadow-sm">Pause Typing</button>
-                <button onclick="stopRemoteType()" class="flex-1 py-2.5 bg-red-600 text-white font-bold uppercase tracking-wide rounded-lg text-sm transition shadow-sm">Stop completely</button>
+                <button id="pause-type-btn" onclick="togglePauseType()" class="flex-1 h-11 bg-amber-500 text-white rounded-lg transition shadow-sm flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                </button>
+                <button onclick="stopRemoteType()" class="flex-1 h-11 bg-red-600 text-white rounded-lg transition shadow-sm flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>
+                </button>
             </div>
         </div>
     </div>
@@ -156,6 +160,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=6"></script>
+    <script src="/static/app.js?v=7"></script>
 </body>
 </html>
