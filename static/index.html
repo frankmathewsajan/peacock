@@ -30,8 +30,7 @@
         </div>
     </header>
 
-    <main id="feed" class="flex-1 overflow-y-auto p-4 space-y-3 scroll-smooth bg-slate-50 w-full">
-        </main>
+    <main id="feed" class="flex-1 overflow-y-auto p-4 space-y-3 scroll-smooth bg-slate-50 w-full"></main>
 
     <footer class="bg-white border-t border-slate-200 p-3 pt-4 shrink-0 shadow-[0_-8px_24px_-6px_rgba(0,0,0,0.04)] z-10 pb-safe w-full">
         
@@ -49,8 +48,12 @@
         </div>
 
         <div class="flex justify-between items-center gap-2 w-full mb-3">
-            <div id="prompts-container" class="flex-1 flex gap-2 h-11">
-                </div>
+            <div id="prompts-container" class="flex-1 flex gap-2 h-11"></div>
+            
+            <button onclick="openRemoteModal()" class="shrink-0 w-11 h-11 flex items-center justify-center bg-slate-100 text-slate-500 hover:text-indigo-600 rounded-xl transition active:scale-95 border border-slate-200 shadow-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/><path d="M6 10h.01"/><path d="M10 10h.01"/><path d="M14 10h.01"/><path d="M18 10h.01"/><path d="M8 14h8"/></svg>
+            </button>
+
             <button onclick="openConfigModal()" class="shrink-0 w-11 h-11 flex items-center justify-center bg-slate-100 text-slate-500 hover:text-slate-800 rounded-xl transition active:scale-95 border border-slate-200 shadow-sm">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </button>
@@ -66,6 +69,27 @@
             </button>
         </div>
     </footer>
+
+    <div id="remote-modal" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-200">
+        <div class="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl transform scale-95 transition-transform duration-200">
+            <h3 class="font-bold text-slate-800 mb-2">Remote Input Injection</h3>
+            <p class="text-[11px] text-slate-400 font-bold uppercase tracking-wider mb-4">Stage text to inject directly onto your PC's active cursor or clipboard.</p>
+            
+            <textarea id="remote-text" class="w-full h-32 border border-slate-200 bg-slate-50 rounded-lg p-3 text-sm outline-none focus:border-indigo-400 focus:bg-white transition mb-4 resize-none" placeholder="Paste or type payload here..."></textarea>
+
+            <div class="flex gap-2">
+                <button onclick="closeRemoteModal()" class="px-3 py-2.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-sm transition hover:bg-slate-200 w-1/4">Close</button>
+                <button onclick="sendRemoteType()" class="flex-1 py-2.5 bg-slate-800 text-white font-semibold rounded-lg text-sm transition hover:bg-slate-700 flex justify-center items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/><path d="M6 10h.01"/><path d="M10 10h.01"/><path d="M14 10h.01"/><path d="M18 10h.01"/><path d="M8 14h8"/></svg>
+                    Type
+                </button>
+                <button onclick="sendRemotePaste()" class="flex-1 py-2.5 bg-indigo-600 text-white font-semibold rounded-lg text-sm transition hover:bg-indigo-500 flex justify-center items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    Paste
+                </button>
+            </div>
+        </div>
+    </div>
 
     <div id="config-modal" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-200">
         <div class="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl transform scale-95 transition-transform duration-200 max-h-[85vh] overflow-y-auto">
@@ -116,6 +140,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
 </body>
 </html>

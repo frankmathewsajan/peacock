@@ -63,7 +63,7 @@ async function init() {
     try {
         const res = await fetch("/tokens");
         const data = await res.json();
-        localStorage.setItem('token_tracker', data.total_tokens);
+        localStorage.setItem('token_tracker', data.total_used);
     } catch(e) { console.error("Could not sync tokens", e); }
 
     transactionHistory = await store.getItem('history_stack') || [];
@@ -118,12 +118,12 @@ function refreshDynamicUI() {
             sendBtn.classList.remove('hidden');
             captureBtn.classList.remove('bg-slate-900', 'text-white');
             captureBtn.classList.add('bg-slate-100', 'text-slate-700');
-            captureText.innerText = "Capture";
+            captureText.innerText = "Add Frame";
         } else {
             sendBtn.classList.add('hidden');
             captureBtn.classList.remove('bg-slate-100', 'text-slate-700');
             captureBtn.classList.add('bg-slate-900', 'text-white');
-            captureText.innerText = "Capture";
+            captureText.innerText = "Start Batch Capture";
         }
     }
 }
@@ -136,7 +136,7 @@ captureBtn.onclick = () => {
         } else {
             pendingExecutionPrompt = null;
         }
-        ws.send("CAPTURE");
+        ws.send(JSON.stringify({ action: "CAPTURE" }));
     }
 };
 
@@ -149,7 +149,7 @@ sendBtn.onclick = () => {
 window.handlePresetClick = function(presetText) {
     if (currentMode === 'single') {
         pendingExecutionPrompt = presetText;
-        if (ws.readyState === 1) ws.send("CAPTURE");
+        if (ws.readyState === 1) ws.send(JSON.stringify({ action: "CAPTURE" }));
     } else {
         if (temporaryBlobs.length > 0) {
             executeInference(presetText, currentModel);
@@ -161,6 +161,37 @@ window.removeDraftBlob = function(index) {
     temporaryBlobs.splice(index, 1);
     renderDraftPreviewRow();
     refreshDynamicUI();
+}
+
+// --- REMOTE INJECTION LOGIC ---
+window.openRemoteModal = function() {
+    const rm = document.getElementById('remote-modal');
+    rm.classList.remove('opacity-0', 'pointer-events-none');
+    rm.children[0].classList.remove('scale-95');
+    document.getElementById('remote-text').value = '';
+    document.getElementById('remote-text').focus();
+}
+
+window.closeRemoteModal = function() {
+    const rm = document.getElementById('remote-modal');
+    rm.classList.add('opacity-0', 'pointer-events-none');
+    rm.children[0].classList.add('scale-95');
+}
+
+window.sendRemoteType = function() {
+    const txt = document.getElementById('remote-text').value;
+    if (ws.readyState === 1 && txt) {
+        ws.send(JSON.stringify({ action: "TYPE", text: txt }));
+        window.closeRemoteModal();
+    }
+}
+
+window.sendRemotePaste = function() {
+    const txt = document.getElementById('remote-text').value;
+    if (ws.readyState === 1 && txt) {
+        ws.send(JSON.stringify({ action: "PASTE", text: txt }));
+        window.closeRemoteModal();
+    }
 }
 
 // --- WebSocket Handlers ---
@@ -207,7 +238,6 @@ function renderDraftPreviewRow() {
         img.src = url;
         img.className = "h-full w-full object-cover";
         
-        // Delete button for drafts
         const delBtn = document.createElement('button');
         delBtn.className = "absolute top-0.5 right-0.5 bg-black/50 text-white rounded-full p-0.5 hover:bg-red-500 transition";
         delBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
@@ -274,7 +304,6 @@ function renderHistoryFeed() {
     });
 }
 
-// --- Telemetry & Config Modals ---
 function updateTokenTelemetry() {
     const used = parseInt(localStorage.getItem('token_tracker') || '0', 10);
     const ratio = Math.min((used / MAX_TOKENS) * 100, 100);
@@ -330,14 +359,12 @@ window.saveConfig = function() {
     closeConfigModal();
 }
 
-// --- Deletion & Data Handling ---
 window.deleteRecord = async function(id) {
     transactionHistory = transactionHistory.filter(item => item.id !== id);
     await store.setItem('history_stack', transactionHistory);
     renderHistoryFeed();
 }
 
-// --- Inference Engine ---
 function showSkeleton() {
     const skel = document.createElement('div');
     skel.id = "skeleton-loader";

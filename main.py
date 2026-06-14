@@ -1,5 +1,7 @@
 import io
 import socket
+import json
+import sys
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -7,11 +9,16 @@ from pydantic import BaseModel
 import uvicorn
 import mss
 import qrcode
+import pyautogui
+import pyperclip
 from PIL import Image
 from dotenv import load_dotenv
 
 load_dotenv()
 from chat_agent import analyze_screen
+
+# Failsafe for PyAutoGUI: moving mouse to corner won't crash the script
+pyautogui.FAILSAFE = False
 
 app = FastAPI()
 
@@ -71,9 +78,18 @@ async def capture_on_demand(websocket: WebSocket):
         monitor = sct.monitors[1]
         try:
             while True:
-                command = await websocket.receive_text()
+                raw_message = await websocket.receive_text()
 
-                if command == "CAPTURE":
+                # Parse the incoming message as JSON to handle different actions
+                try:
+                    payload = json.loads(raw_message)
+                    action = payload.get("action")
+                    text_data = payload.get("text", "")
+                except json.JSONDecodeError:
+                    # Fallback just in case old plain-text commands slip through
+                    action = raw_message
+
+                if action == "CAPTURE":
                     sct_img = sct.grab(monitor)
                     img = Image.frombytes(
                         "RGB", sct_img.size, sct_img.bgra, "raw", "BGRX"
@@ -84,6 +100,18 @@ async def capture_on_demand(websocket: WebSocket):
                     buffer = io.BytesIO()
                     img.save(buffer, format="PNG")
                     await websocket.send_bytes(buffer.getvalue())
+
+                elif action == "TYPE":
+                    # Simulates human keystrokes at the active cursor
+                    pyautogui.write(text_data, interval=0.01)
+
+                elif action == "PASTE":
+                    # Injects text into host clipboard and triggers native paste
+                    pyperclip.copy(text_data)
+                    if sys.platform == "darwin":  # macOS
+                        pyautogui.hotkey("command", "v")
+                    else:  # Windows / Linux
+                        pyautogui.hotkey("ctrl", "v")
 
         except WebSocketDisconnect:
             pass
