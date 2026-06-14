@@ -6,6 +6,7 @@ import time
 import random
 import threading
 import asyncio
+import ast
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,7 +32,7 @@ SESSION_IMAGES: list[Image.Image] = []
 TOTAL_TOKENS_USED = 0
 
 
-# --- NEW: Asynchronous Typing State Machine ---
+# --- Asynchronous Typing State Machine ---
 class TypingState:
     def __init__(self):
         self.is_active = False
@@ -57,35 +58,63 @@ typing_state = TypingState()
 
 def background_typing_task(text_data, state: TypingState):
     """
-    Runs in a separate thread. Checks the state flag before EVERY keystroke.
+    Runs in a separate thread. Detects Python code, formats it,
+    strips comments, and simulates human keystrokes.
     """
-    for char in text_data:
-        # Check for absolute stop command
+    is_python = False
+
+    # 1. SMART DETECTION & CLEANING
+    try:
+        # ast.parse throws a SyntaxError if it's not valid Python.
+        # ast.unparse rebuilds the code perfectly, destroying all '#' comments.
+        tree = ast.parse(text_data)
+        cleaned_text = ast.unparse(tree)
+        is_python = True
+        print("🐍 Python code detected. Stripping comments and normalizing indent.")
+    except SyntaxError:
+        # Fallback to raw text if it's English or an invalid snippet
+        cleaned_text = text_data
+
+    # 2. HUMAN SIMULATION TYPING LOOP
+    lines = cleaned_text.split("\n")
+
+    for line in lines:
         if not state.is_active:
             break
 
-        # Check for pause loop
+        # Pause loop
         while state.is_paused:
             if not state.is_active:  # Allow stopping while paused
                 return
             time.sleep(0.1)
 
-        # 5% chance to simulate a typo on alphabetic characters
-        if random.random() < 0.05 and char.isalpha():
-            wrong_char = random.choice("abcdefghijklmnopqrstuvwxyz")
-            pyautogui.write(wrong_char)
-            time.sleep(random.uniform(0.05, 0.15))
-            pyautogui.press("backspace")
-            time.sleep(random.uniform(0.05, 0.15))
+        # Type the characters in the line
+        for char in line:
+            if not state.is_active:
+                break
 
-        if char == "\n":
-            pyautogui.press("enter")
-        else:
+            # Typo calculation (1% for code, 5% for English)
+            typo_chance = 0.01 if is_python else 0.05
+
+            if random.random() < typo_chance and char.isalpha():
+                wrong_char = random.choice("abcdefghijklmnopqrstuvwxyz")
+                pyautogui.write(wrong_char)
+                time.sleep(random.uniform(0.04, 0.12))
+                pyautogui.press("backspace")
+                time.sleep(random.uniform(0.04, 0.12))
+
+            # Type actual character
             pyautogui.write(char)
+            time.sleep(random.uniform(0.01, 0.06))  # Millisecond delay per key
 
-        time.sleep(random.uniform(0.01, 0.08))
+        # Hit enter at the end of the line
+        pyautogui.press("enter")
 
-    state.is_active = False  # Reset state when fully done natively
+        # Humans pause slightly longer between lines to think/read
+        time.sleep(random.uniform(0.1, 0.3))
+
+    # Reset state when fully done natively
+    state.is_active = False
 
 
 class ChatRequest(BaseModel):
@@ -186,7 +215,7 @@ async def capture_on_demand(websocket: WebSocket):
                     )
                     typing_state.thread.start()
 
-                # --- NEW STEALTH MACRO CONTROLS ---
+                # --- STEALTH MACRO CONTROLS ---
                 elif action == "PAUSE_TYPE":
                     typing_state.pause()
 
