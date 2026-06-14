@@ -60,6 +60,11 @@
         </div>
 
         <div class="flex gap-2 w-full items-center">
+            
+            <button id="extract-text-btn" class="shrink-0 h-14 w-14 rounded-xl bg-slate-100 text-slate-700 active:scale-[0.96] transition shadow-sm flex items-center justify-center border border-slate-200" title="Extract Screen Text">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            </button>
+
             <button id="capture-btn" class="flex-1 h-14 rounded-xl bg-slate-900 text-white text-base font-semibold active:scale-[0.98] transition flex items-center justify-center gap-2 shadow-md">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
                 <span id="capture-text">Capture & Analyze</span>
@@ -77,7 +82,7 @@
             
             <textarea id="remote-text" class="w-full h-32 border border-slate-200 bg-slate-50 rounded-lg p-3 text-sm outline-none focus:border-indigo-400 focus:bg-white transition mb-4 resize-none" placeholder="Paste or type payload here..."></textarea>
 
-            <div class="flex gap-2">
+            <div id="injection-controls" class="flex gap-2">
                 <button onclick="closeRemoteModal()" class="px-3 py-2.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-sm transition hover:bg-slate-200 w-1/4">Close</button>
                 <button onclick="sendRemoteType()" class="flex-1 py-2.5 bg-slate-800 text-white font-semibold rounded-lg text-sm transition hover:bg-slate-700 flex justify-center items-center gap-2">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/><path d="M6 10h.01"/><path d="M10 10h.01"/><path d="M14 10h.01"/><path d="M18 10h.01"/><path d="M8 14h8"/></svg>
@@ -87,6 +92,11 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     Paste
                 </button>
+            </div>
+
+            <div id="active-type-controls" class="hidden flex gap-2 w-full">
+                <button id="pause-type-btn" onclick="togglePauseType()" class="flex-1 py-2.5 bg-amber-500 text-white font-bold uppercase tracking-wide rounded-lg text-sm transition shadow-sm">Pause Typing</button>
+                <button onclick="stopRemoteType()" class="flex-1 py-2.5 bg-red-600 text-white font-bold uppercase tracking-wide rounded-lg text-sm transition shadow-sm">Stop completely</button>
             </div>
         </div>
     </div>
@@ -131,15 +141,21 @@
     <div id="modal" class="fixed inset-0 bg-white z-50 flex flex-col transform translate-y-full transition-transform duration-300 ease-in-out">
         <div class="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50 shrink-0 pt-safe">
             <h2 class="font-semibold text-sm text-slate-700 uppercase tracking-wider">Analysis Output</h2>
-            <button onclick="closeModal()" class="h-9 px-4 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg font-bold text-xs transition active:scale-95">
-                Close
-            </button>
+            <div class="flex gap-2">
+                <button onclick="copyModalContent()" class="h-9 px-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg font-bold text-xs transition active:scale-95 border border-indigo-200 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    Copy
+                </button>
+                <button onclick="closeModal()" class="h-9 px-4 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-lg font-bold text-xs transition active:scale-95">
+                    Close
+                </button>
+            </div>
         </div>
         <div class="flex-1 overflow-y-auto p-5 bg-white pb-safe">
             <article id="modal-content" class="prose prose-slate prose-sm max-w-none prose-headings:font-semibold prose-pre:bg-slate-900 text-slate-800 leading-relaxed"></article>
         </div>
     </div>
 
-    <script src="/static/app.js?v=2"></script>
+    <script src="/static/app.js?v=6"></script>
 </body>
 </html>

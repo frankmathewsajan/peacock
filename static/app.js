@@ -1,17 +1,15 @@
-// --- Database & Network Initialization ---
 const store = localforage.createInstance({ name: 'stealth_history_db' });
 const ws = new WebSocket(`ws://${location.host}/stream`);
 ws.binaryType = "blob";
 
-// --- DOM Element Caching ---
 const captureBtn = document.getElementById("capture-btn");
+const extractTextBtn = document.getElementById("extract-text-btn");
 const captureText = document.getElementById("capture-text");
 const sendBtn = document.getElementById("send-btn");
 const draftGallery = document.getElementById("draft-gallery");
 const feed = document.getElementById("feed");
 const modal = document.getElementById("modal");
 
-// --- Global State Variables ---
 const MAX_TOKENS = 1000000;
 let temporaryBlobs = [];
 let transactionHistory = [];
@@ -19,8 +17,9 @@ let tokenFormat = 'raw';
 let currentModel = 'fast';
 let currentMode = 'single'; 
 let pendingExecutionPrompt = null;
+let currentModalText = ""; // Holds raw text for copying
+let isTypingPaused = false; // State for UI toggle
 
-// --- Config & Presets ---
 const natureEmojis = [
     '🦚', '🌿', '🪴', '🌲', '🌸', 
     '🌻', '🍄', '🦉', '🕊️', '🦆', 
@@ -56,14 +55,13 @@ if (Array.isArray(legacyPrompts) && typeof legacyPrompts[0] === 'string') {
 
 let autoFirePrompt = localStorage.getItem('auto_prompt') || "Analyze this screen and provide key takeaways.";
 
-// --- Boot Sequence ---
 async function init() {
     populateEmojiPickers();
 
     try {
         const res = await fetch("/tokens");
         const data = await res.json();
-        localStorage.setItem('token_tracker', data.total_used);
+        localStorage.setItem('token_tracker', data.total_tokens || data.total_used);
     } catch(e) { console.error("Could not sync tokens", e); }
 
     transactionHistory = await store.getItem('history_stack') || [];
@@ -88,7 +86,6 @@ function populateEmojiPickers() {
     });
 }
 
-// --- State Setters ---
 window.setModel = function(target) {
     currentModel = target;
     document.getElementById('model-fast').className = target === 'fast' ? "flex-1 px-2 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-md bg-white shadow-sm text-slate-800 transition" : "flex-1 px-2 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-md text-slate-400 transition hover:text-slate-600";
@@ -128,7 +125,6 @@ function refreshDynamicUI() {
     }
 }
 
-// --- Action Triggers ---
 captureBtn.onclick = () => {
     if (ws.readyState === 1) {
         if (currentMode === 'single') {
@@ -139,6 +135,16 @@ captureBtn.onclick = () => {
         ws.send(JSON.stringify({ action: "CAPTURE" }));
     }
 };
+
+extractTextBtn.onclick = () => {
+    if (ws.readyState === 1) {
+        ws.send(JSON.stringify({ action: "EXTRACT_TEXT" }));
+        
+        const oldHtml = extractTextBtn.innerHTML;
+        extractTextBtn.innerHTML = `<span class="animate-pulse font-bold text-[10px]">WAIT</span>`;
+        setTimeout(() => { extractTextBtn.innerHTML = oldHtml; }, 800);
+    }
+}
 
 sendBtn.onclick = () => {
     if (temporaryBlobs.length > 0) {
@@ -163,13 +169,20 @@ window.removeDraftBlob = function(index) {
     refreshDynamicUI();
 }
 
-// --- REMOTE INJECTION LOGIC ---
+// --- Remote Injection Logic ---
 window.openRemoteModal = function() {
     const rm = document.getElementById('remote-modal');
     rm.classList.remove('opacity-0', 'pointer-events-none');
     rm.children[0].classList.remove('scale-95');
     document.getElementById('remote-text').value = '';
     document.getElementById('remote-text').focus();
+    
+    // Reset typing UI state
+    document.getElementById('injection-controls').classList.remove('hidden');
+    document.getElementById('active-type-controls').classList.add('hidden');
+    isTypingPaused = false;
+    document.getElementById('pause-type-btn').innerText = "Pause Typing";
+    document.getElementById('pause-type-btn').classList.replace('bg-emerald-500', 'bg-amber-500');
 }
 
 window.closeRemoteModal = function() {
@@ -182,7 +195,10 @@ window.sendRemoteType = function() {
     const txt = document.getElementById('remote-text').value;
     if (ws.readyState === 1 && txt) {
         ws.send(JSON.stringify({ action: "TYPE", text: txt }));
-        window.closeRemoteModal();
+        
+        // Swap to the pause/stop interface instead of closing modal
+        document.getElementById('injection-controls').classList.add('hidden');
+        document.getElementById('active-type-controls').classList.remove('hidden');
     }
 }
 
@@ -194,8 +210,48 @@ window.sendRemotePaste = function() {
     }
 }
 
-// --- WebSocket Handlers ---
-ws.onmessage = (e) => {
+window.togglePauseType = function() {
+    const btn = document.getElementById('pause-type-btn');
+    if (!isTypingPaused) {
+        ws.send(JSON.stringify({ action: "PAUSE_TYPE" }));
+        isTypingPaused = true;
+        btn.innerText = "Resume Typing";
+        btn.classList.replace('bg-amber-500', 'bg-emerald-500');
+    } else {
+        ws.send(JSON.stringify({ action: "RESUME_TYPE" }));
+        isTypingPaused = false;
+        btn.innerText = "Pause Typing";
+        btn.classList.replace('bg-emerald-500', 'bg-amber-500');
+    }
+}
+
+window.stopRemoteType = function() {
+    ws.send(JSON.stringify({ action: "STOP_TYPE" }));
+    window.closeRemoteModal();
+}
+
+// --- WebSocket Resolution ---
+ws.onmessage = async (e) => {
+    if (typeof e.data === 'string') {
+        try {
+            const data = JSON.parse(e.data);
+            if (data.type === "extracted_text") {
+                const contextRecord = {
+                    id: Date.now(),
+                    prompt: "Clipboard Extraction",
+                    model: "System",
+                    images: [],
+                    response: data.content
+                };
+                
+                transactionHistory.unshift(contextRecord);
+                await store.setItem('history_stack', transactionHistory);
+                renderHistoryFeed();
+            }
+        } catch(err) { console.error(err); }
+        return;
+    }
+
     temporaryBlobs.push(e.data);
     renderDraftPreviewRow();
     refreshDynamicUI();
@@ -451,16 +507,40 @@ async function executeInference(queryText, executionModel) {
     }
 }
 
+// --- Display Modal with Copy Feature ---
 window.showModalContent = function(id) {
     const target = transactionHistory.find(item => item.id === id);
     if (target) {
+        currentModalText = target.response; // Stage raw text for copying
         document.getElementById('modal-content').innerHTML = marked.parse(target.response);
         modal.classList.remove('translate-y-full');
     }
 }
 
+window.copyModalContent = function() {
+    if (!currentModalText) return;
+    
+    navigator.clipboard.writeText(currentModalText).then(() => {
+        // Find the copy button by looking for its SVG child, or give it an ID
+        const btn = document.querySelector('#modal button[onclick="copyModalContent()"]');
+        const oldHtml = btn.innerHTML;
+        
+        // Provide visual confirmation
+        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!`;
+        btn.classList.replace('text-indigo-700', 'text-emerald-600');
+        btn.classList.replace('border-indigo-200', 'border-emerald-200');
+        
+        setTimeout(() => {
+            btn.innerHTML = oldHtml;
+            btn.classList.replace('text-emerald-600', 'text-indigo-700');
+            btn.classList.replace('border-emerald-200', 'border-indigo-200');
+        }, 1500);
+    });
+}
+
 window.closeModal = function() {
     modal.classList.add('translate-y-full');
+    currentModalText = ""; // Clear staged text
 }
 
 // Initialize boot
