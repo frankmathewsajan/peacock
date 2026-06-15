@@ -4,13 +4,15 @@ import json
 import sys
 import time
 import random
-import threading
 import asyncio
-import ast
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import re
+from contextlib import asynccontextmanager
+from typing import Literal
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 import uvicorn
 import mss
 import qrcode
@@ -19,260 +21,262 @@ import pyperclip
 from PIL import Image
 from dotenv import load_dotenv
 
-load_dotenv()
 from chat_agent import analyze_screen
 
+load_dotenv()
 pyautogui.FAILSAFE = False
 
-app = FastAPI()
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-SESSION_IMAGES: list[Image.Image] = []
-TOTAL_TOKENS_USED = 0
+# Evaluate the OS modifier constraint exactly once at module load
+MODIFIER_KEY = "command" if sys.platform == "darwin" else "ctrl"
 
 
-# --- Asynchronous Typing State Machine ---
-class TypingState:
+def clean_code(text_data: str) -> tuple[str, bool]:
+    """
+    Replaces the blunt AST parser with targeted regex string manipulation.
+    Strips Python comments while strictly preserving exact whitespace and structure.
+    """
+    is_python = "def " in text_data or "import " in text_data or "class " in text_data
+    if is_python:
+        # Strip comments but preserve the indentation skeleton
+        text_data = re.sub(r"#.*", "", text_data)
+        # Filter out lines that became completely empty
+        lines = [line for line in text_data.split("\n") if line.strip() != ""]
+        return "\n".join(lines), True
+    return text_data, False
+
+
+class PeripheralActor:
+    """
+    Event-driven Actor Model for managing hardware-bound tasks.
+    Isolates typing simulations from the web server's concurrency model.
+    """
+
     def __init__(self):
-        self.is_active = False
-        self.is_paused = False
-        self.current_text = ""
-        self.thread = None
-
-    def stop(self):
-        self.is_active = False
+        self.queue = asyncio.Queue()
+        self.typing_task: asyncio.Task | None = None
         self.is_paused = False
 
-    def pause(self):
-        if self.is_active:
-            self.is_paused = True
+    async def run_loop(self):
+        while True:
+            command, payload = await self.queue.get()
 
-    def resume(self):
-        if self.is_active:
-            self.is_paused = False
+            if command == "TYPE":
+                if self.typing_task and not self.typing_task.done():
+                    self.typing_task.cancel()
+                self.is_paused = False
+                self.typing_task = asyncio.create_task(self._async_type(payload))
 
+            elif command == "PAUSE_TYPE":
+                self.is_paused = True
 
-typing_state = TypingState()
+            elif command == "RESUME_TYPE":
+                self.is_paused = False
 
+            elif command == "STOP_TYPE":
+                if self.typing_task:
+                    self.typing_task.cancel()
 
-def clean_if_python(text_data):
-    """
-    Attempts to parse text as Python AST. If successful, returns the perfectly
-    formatted code without comments. If it fails, returns the original text.
-    """
-    try:
-        tree = ast.parse(text_data)
-        cleaned_text = ast.unparse(tree)
-        print("🐍 Python code detected. Stripping comments and normalizing indent.")
-        return cleaned_text, True
-    except SyntaxError:
-        return text_data, False
+    async def _async_type(self, text_data: str):
+        """
+        Executes human-like typing cooperatively. Yields control back to the
+        ASGI event loop via asyncio.sleep() rather than blocking the main thread.
+        """
+        try:
+            cleaned_text, is_python = clean_code(text_data)
+            lines = cleaned_text.split("\n")
+            prev_indent = 0
 
+            for line in lines:
+                while self.is_paused:
+                    await asyncio.sleep(0.1)
 
-def background_typing_task(text_data, state: TypingState):
-    """
-    Runs in a separate thread. Detects Python code, formats it,
-    strips comments, and simulates human keystrokes with smart de-indentation.
-    """
-    cleaned_text, is_python = clean_if_python(text_data)
+                curr_indent = len(line) - len(line.lstrip(" "))
 
-    # HUMAN SIMULATION TYPING LOOP
-    lines = cleaned_text.split("\n")
-    prev_indent = 0  # Track the indentation level of the previous line
+                if is_python and curr_indent < prev_indent:
+                    levels_to_drop = (prev_indent - curr_indent) // 4
+                    for _ in range(levels_to_drop):
+                        pyautogui.press("backspace")
+                        await asyncio.sleep(0.05)
 
-    for line in lines:
-        if not state.is_active:
-            break
+                line = line.lstrip(" ")
+                prev_indent = curr_indent
 
-        # Pause loop
-        while state.is_paused:
-            if not state.is_active:  # Allow stopping while paused
-                return
-            time.sleep(0.1)
+                for char in line:
+                    while self.is_paused:
+                        await asyncio.sleep(0.1)
 
-        # Calculate exact leading spaces generated by AST
-        curr_indent = len(line) - len(line.lstrip(" "))
+                    typo_chance = 0.01 if is_python else 0.05
+                    if random.random() < typo_chance and char.isalpha():
+                        wrong_char = random.choice("abcdefghijklmnopqrstuvwxyz")
+                        pyautogui.write(wrong_char)
+                        await asyncio.sleep(random.uniform(0.04, 0.12))
+                        pyautogui.press("backspace")
+                        await asyncio.sleep(random.uniform(0.04, 0.12))
 
-        if is_python:
-            # If AST indentation drops, we exited a nested block.
-            # Hit backspace to reverse the IDE's lingering auto-indent.
-            if curr_indent < prev_indent:
-                levels_to_drop = (prev_indent - curr_indent) // 4
-                for _ in range(levels_to_drop):
-                    pyautogui.press("backspace")
-                    time.sleep(0.05)
+                    pyautogui.write(char)
+                    # Yield execution back to the server loop
+                    await asyncio.sleep(random.uniform(0.01, 0.06))
 
-            # Strip the string so the IDE's forward auto-indent handles it
-            line = line.lstrip(" ")
-            prev_indent = curr_indent
+                pyautogui.press("enter")
+                await asyncio.sleep(random.uniform(0.1, 0.3))
 
-        # Type the characters in the line
-        for char in line:
-            if not state.is_active:
-                break
-
-            # Typo calculation (1% for code, 5% for English)
-            typo_chance = 0.01 if is_python else 0.05
-
-            if random.random() < typo_chance and char.isalpha():
-                wrong_char = random.choice("abcdefghijklmnopqrstuvwxyz")
-                pyautogui.write(wrong_char)
-                time.sleep(random.uniform(0.04, 0.12))
-                pyautogui.press("backspace")
-                time.sleep(random.uniform(0.04, 0.12))
-
-            # Type actual character
-            pyautogui.write(char)
-            time.sleep(random.uniform(0.01, 0.06))  # Millisecond delay per key
-
-        # Hit enter at the end of the line
-        pyautogui.press("enter")
-
-        # Humans pause slightly longer between lines to think/read
-        time.sleep(random.uniform(0.1, 0.3))
-
-    # Reset state when fully done natively
-    state.is_active = False
+        except asyncio.CancelledError:
+            # Task was intercepted and killed by the Actor gracefully
+            pass
 
 
+# --- Pydantic Data Contracts ---
 class ChatRequest(BaseModel):
     message: str
     model_tier: str = "fast"
 
 
+class StreamEvent(BaseModel):
+    action: Literal[
+        "CAPTURE",
+        "EXTRACT_TEXT",
+        "TYPE",
+        "PAUSE_TYPE",
+        "RESUME_TYPE",
+        "STOP_TYPE",
+        "PASTE",
+    ]
+    text: str = ""
+
+
+# --- Application State Management ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Initializes dependent services scoped cleanly to the server lifecycle.
+    """
+    app.state.actor = PeripheralActor()
+    app.state.actor_task = asyncio.create_task(app.state.actor.run_loop())
+    app.state.session_images = []
+    app.state.total_tokens = 0
+    yield
+    # Clean teardown
+    app.state.actor_task.cancel()
+
+
+app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+# --- Synchronous Offload Functions ---
+def _sync_capture() -> io.BytesIO:
+    """Isolates the blocking C-extension MSS call."""
+    with mss.MSS() as sct:
+        sct_img = sct.grab(sct.monitors[1])
+        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        return img, buffer
+
+
+def _sync_extract_text() -> str:
+    """Isolates the blocking clipboard and hotkey operations."""
+    old_clipboard = pyperclip.paste()
+    pyautogui.hotkey(MODIFIER_KEY, "a")
+    time.sleep(0.1)
+    pyautogui.hotkey(MODIFIER_KEY, "c")
+    time.sleep(0.1)
+    extracted = pyperclip.paste()
+    pyperclip.copy(old_clipboard)
+    return extracted
+
+
+def _sync_paste(text: str):
+    pyperclip.copy(text)
+    pyautogui.hotkey(MODIFIER_KEY, "v")
+
+
+# --- Endpoints ---
 @app.get("/")
 async def serve_index():
     return FileResponse("static/index.html")
 
 
 @app.get("/tokens")
-async def get_tokens():
-    return {"total_used": TOTAL_TOKENS_USED}
+async def get_tokens(request: Request):
+    return {"total_used": request.app.state.total_tokens}
 
 
 @app.post("/chat")
-async def process_chat(request: ChatRequest):
-    global SESSION_IMAGES, TOTAL_TOKENS_USED
+async def process_chat(request_data: ChatRequest, request: Request):
+    state = request.app.state
 
-    if not SESSION_IMAGES and not request.message:
+    if not state.session_images and not request_data.message:
         return {
             "response": "System Error: Prompt or capture context required.",
-            "total_tokens": TOTAL_TOKENS_USED,
+            "total_tokens": state.total_tokens,
         }
 
     answer, tokens_used = analyze_screen(
-        request.message, SESSION_IMAGES, request.model_tier
+        request_data.message, state.session_images, request_data.model_tier
     )
 
-    TOTAL_TOKENS_USED += tokens_used
-    SESSION_IMAGES.clear()
+    state.total_tokens += tokens_used
+    state.session_images.clear()
 
     return {
         "response": answer,
-        "total_tokens": TOTAL_TOKENS_USED,
+        "total_tokens": state.total_tokens,
     }
 
 
 @app.websocket("/stream")
 async def capture_on_demand(websocket: WebSocket):
-    global SESSION_IMAGES, typing_state
     await websocket.accept()
+    actor: PeripheralActor = websocket.app.state.actor
 
-    with mss.MSS() as sct:
-        monitor = sct.monitors[1]
-        try:
-            while True:
-                raw_message = await websocket.receive_text()
-
-                try:
-                    payload = json.loads(raw_message)
-                    action = payload.get("action")
-                    text_data = payload.get("text", "")
-                except json.JSONDecodeError:
-                    action = raw_message
-
-                if action == "CAPTURE":
-                    sct_img = sct.grab(monitor)
-                    img = Image.frombytes(
-                        "RGB", sct_img.size, sct_img.bgra, "raw", "BGRX"
-                    )
-                    SESSION_IMAGES.append(img)
-
-                    buffer = io.BytesIO()
-                    img.save(buffer, format="PNG")
-                    await websocket.send_bytes(buffer.getvalue())
-
-                elif action == "EXTRACT_TEXT":
-                    old_clipboard = pyperclip.paste()
-
-                    if sys.platform == "darwin":
-                        pyautogui.hotkey("command", "a")
-                        time.sleep(0.1)
-                        pyautogui.hotkey("command", "c")
-                    else:
-                        pyautogui.hotkey("ctrl", "a")
-                        time.sleep(0.1)
-                        pyautogui.hotkey("ctrl", "c")
-
-                    time.sleep(0.1)
-                    extracted = pyperclip.paste()
-
-                    await websocket.send_text(
-                        json.dumps({"type": "extracted_text", "content": extracted})
-                    )
-
-                    pyperclip.copy(old_clipboard)
-
-                elif action == "TYPE":
-                    typing_state.stop()
-                    typing_state.is_active = True
-                    typing_state.is_paused = False
-                    typing_state.thread = threading.Thread(
-                        target=background_typing_task, args=(text_data, typing_state)
-                    )
-                    typing_state.thread.start()
-
-                elif action == "PAUSE_TYPE":
-                    typing_state.pause()
-
-                elif action == "RESUME_TYPE":
-                    typing_state.resume()
-
-                elif action == "STOP_TYPE":
-                    typing_state.stop()
-
-                elif action == "PASTE":
-                    # Run through the AST cleaner before pasting
-                    cleaned_text, _ = clean_if_python(text_data)
-                    pyperclip.copy(cleaned_text)
-
-                    if sys.platform == "darwin":
-                        pyautogui.hotkey("command", "v")
-                    else:
-                        pyautogui.hotkey("ctrl", "v")
-
-        except WebSocketDisconnect:
-            typing_state.stop()  # Failsafe
-        except Exception as e:
-            print(f"Stream error: {e}")
-            typing_state.stop()
-            try:
-                await websocket.close()
-            except RuntimeError:
-                pass
-
-
-def get_local_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.connect(("10.255.255.255", 1))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = "127.0.0.1"
-    finally:
-        s.close()
-    return ip
+        while True:
+            raw_message = await websocket.receive_text()
+
+            try:
+                event = StreamEvent.model_validate_json(raw_message)
+            except ValidationError:
+                # Fallback for simple string commands
+                event = StreamEvent(action=raw_message)
+
+            if event.action == "CAPTURE":
+                # Offload to prevent blocking the websocket loop
+                img, buffer = await asyncio.to_thread(_sync_capture)
+                websocket.app.state.session_images.append(img)
+                await websocket.send_bytes(buffer.getvalue())
+
+            elif event.action == "EXTRACT_TEXT":
+                extracted = await asyncio.to_thread(_sync_extract_text)
+                await websocket.send_text(
+                    json.dumps({"type": "extracted_text", "content": extracted})
+                )
+
+            elif event.action in ["TYPE", "PAUSE_TYPE", "RESUME_TYPE", "STOP_TYPE"]:
+                await actor.queue.put((event.action, event.text))
+
+            elif event.action == "PASTE":
+                cleaned_text, _ = clean_code(event.text)
+                await asyncio.to_thread(_sync_paste, cleaned_text)
+
+    except WebSocketDisconnect:
+        await actor.queue.put(("STOP_TYPE", ""))
+    except Exception as e:
+        print(f"Stream interface degraded: {e}")
+        await actor.queue.put(("STOP_TYPE", ""))
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
+
+
+def get_local_ip() -> str:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+        except Exception:
+            return "127.0.0.1"
 
 
 if __name__ == "__main__":
@@ -280,8 +284,7 @@ if __name__ == "__main__":
     local_ip = get_local_ip()
     target_url = f"http://{local_ip}:{port}"
 
-    print("\nPeacock Engine initialized.")
-    print("Ensure both devices are on the same local network.")
+    print("\n[SYSTEM] Peacock Engine Initialized")
     print(f"\nDashboard URL: {target_url}\n")
 
     qr = qrcode.QRCode(version=1, box_size=1, border=2)
@@ -289,5 +292,5 @@ if __name__ == "__main__":
     qr.make(fit=True)
     qr.print_ascii(invert=True)
 
-    print("\nStarting server...\n")
+    print("\nStarting Uvicorn ASGI Server...\n")
     uvicorn.run(app, host="0.0.0.0", port=port)
