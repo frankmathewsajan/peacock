@@ -9,7 +9,6 @@
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
-    
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 
@@ -50,11 +49,11 @@
         <div class="flex justify-between items-center gap-2 w-full mb-3">
             <div id="prompts-container" class="flex-1 flex gap-2 h-11"></div>
             
-            <button id="open-remote-btn" class="shrink-0 w-11 h-11 flex items-center justify-center bg-slate-100 text-slate-500 hover:text-indigo-600 rounded-xl transition active:scale-95 border border-slate-200 shadow-sm">
+            <button id="open-remote-btn" class="shrink-0 w-11 h-11 flex items-center justify-center bg-slate-100 text-slate-500 hover:text-indigo-600 rounded-xl transition active:scale-95 border border-slate-200 shadow-sm" title="Remote Hub">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/><path d="M6 10h.01"/><path d="M10 10h.01"/><path d="M14 10h.01"/><path d="M18 10h.01"/><path d="M8 14h8"/></svg>
             </button>
 
-            <button id="open-config-btn" class="shrink-0 w-11 h-11 flex items-center justify-center bg-slate-100 text-slate-500 hover:text-slate-800 rounded-xl transition active:scale-95 border border-slate-200 shadow-sm">
+            <button id="open-config-btn" class="shrink-0 w-11 h-11 flex items-center justify-center bg-slate-100 text-slate-500 hover:text-slate-800 rounded-xl transition active:scale-95 border border-slate-200 shadow-sm" title="Engine Config">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </button>
         </div>
@@ -64,10 +63,15 @@
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             </button>
 
+            <button id="peek-btn" class="shrink-0 h-14 w-14 rounded-xl bg-indigo-50 text-indigo-700 active:scale-[0.96] transition shadow-sm flex items-center justify-center border border-indigo-200" title="Peek Screen">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+
             <button id="capture-btn" class="flex-1 h-14 rounded-xl bg-slate-900 text-white text-base font-semibold active:scale-[0.98] transition flex items-center justify-center gap-2 shadow-md">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
                 <span id="capture-text">Capture & Analyze</span>
             </button>
+
             <button id="send-btn" class="hidden shrink-0 h-14 w-16 rounded-xl bg-slate-900 text-white active:scale-[0.96] transition shadow-md flex items-center justify-center">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
@@ -76,17 +80,62 @@
 
     <div id="remote-modal" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-200">
         <div class="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl transform scale-95 transition-transform duration-200">
-            <h3 class="font-bold text-slate-800 mb-2">Remote Input Injection</h3>
-            <textarea id="remote-text" class="w-full h-32 border border-slate-200 bg-slate-50 rounded-lg p-3 text-sm outline-none focus:border-indigo-400 focus:bg-white transition mb-4 resize-none" placeholder="Paste or type payload here..."></textarea>
-            <div id="injection-controls" class="flex gap-2">
-                <button id="close-remote-btn" class="px-3 py-2.5 bg-slate-100 text-slate-700 font-semibold rounded-lg text-sm transition hover:bg-slate-200 w-1/4">Close</button>
-                <button id="remote-type-btn" class="flex-1 py-2.5 bg-slate-800 text-white font-semibold rounded-lg text-sm transition hover:bg-slate-700 flex justify-center items-center gap-2">Type</button>
-                <button id="remote-paste-btn" class="flex-1 py-2.5 bg-indigo-600 text-white font-semibold rounded-lg text-sm transition hover:bg-indigo-500 flex justify-center items-center gap-2">Paste</button>
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-bold text-slate-800">Remote Injection Hub</h3>
             </div>
-            <div id="active-type-controls" class="hidden flex gap-2 w-full">
-                <button id="pause-type-btn" class="flex-1 h-11 bg-amber-500 text-white rounded-lg transition shadow-sm flex items-center justify-center">Pause</button>
-                <button id="stop-type-btn" class="flex-1 h-11 bg-red-600 text-white rounded-lg transition shadow-sm flex items-center justify-center">Stop</button>
+            
+            <div class="mb-3">
+                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">Routing Target</label>
+                <select id="route-target" class="w-full border border-slate-200 bg-slate-50 rounded-lg p-2 text-xs outline-none focus:border-indigo-400 font-semibold text-slate-700">
+                    <option value="os">OS Target</option>
+                    <option value="prompter">Stealth Teleprompter</option>
+                </select>
             </div>
+
+            <textarea id="remote-text" class="w-full h-40 border border-slate-200 bg-slate-50 rounded-lg p-3 text-sm outline-none focus:border-indigo-400 focus:bg-white transition mb-4 resize-none" placeholder="Stage your payload here..."></textarea>
+            
+            <div class="flex gap-2">
+                <button id="close-remote-btn" class="px-3 py-3 bg-slate-100 text-slate-700 font-semibold rounded-lg text-sm transition hover:bg-slate-200 w-1/4">Close</button>
+                <button id="remote-send-btn" class="flex-1 py-3 bg-indigo-600 text-white font-semibold rounded-lg text-sm transition hover:bg-indigo-500">Send Payload</button>
+            </div>
+
+           <div class="mt-5 pt-4 border-t border-slate-100">
+                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">Teleprompter Hardware Toggles</label>
+                <div class="flex gap-2 mb-2">
+                    <button id="toggle-vis-btn" class="flex-1 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs transition hover:bg-slate-200 border border-slate-200">Hide UI</button>
+                    <button id="toggle-lock-btn" class="flex-1 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs transition hover:bg-slate-200 border border-slate-200">Lock (Intangible)</button>
+                </div>
+                
+                <div class="flex gap-2">
+                    <button id="toggle-theme-btn" class="w-full py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg text-xs transition hover:bg-slate-200 border border-slate-200">🌓 Toggle Light/Dark Mode</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="config-modal" class="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-200">
+        <div class="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl transform scale-95 transition-transform duration-200 max-h-[85vh] overflow-y-auto">
+            <h3 class="font-bold text-slate-800 mb-4">Engine Configuration</h3>
+            
+            <div class="mb-5 border-b border-slate-100 pb-5">
+                <label class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 block">Default Execution Prompt</label>
+                <input id="auto-prompt" class="w-full border border-indigo-200 bg-indigo-50 rounded-lg p-2.5 text-sm outline-none focus:border-indigo-400" placeholder="Default execute command...">
+            </div>
+
+            <div class="space-y-3 mb-6" id="preset-editors-container">
+                </div>
+
+            <div class="flex gap-2 justify-end">
+                <button id="close-config-btn" class="px-4 py-2 bg-slate-100 text-slate-700 font-semibold rounded-lg text-sm transition hover:bg-slate-200">Cancel</button>
+                <button id="save-config-btn" class="px-4 py-2 bg-slate-900 text-white font-semibold rounded-lg text-sm transition hover:bg-slate-800">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="image-modal" class="fixed inset-0 bg-slate-900/90 z-[60] flex items-center justify-center p-4 opacity-0 pointer-events-none transition-opacity duration-200">
+        <div class="relative w-full max-w-3xl max-h-[90vh] flex flex-col items-center justify-center">
+            <button id="close-image-modal" class="absolute -top-10 right-0 text-slate-300 hover:text-white font-bold text-3xl transition">&times;</button>
+            <img id="preview-image-element" class="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl bg-black" src="" />
         </div>
     </div>
 
