@@ -10,7 +10,10 @@ export const API = {
         this.ws = new WebSocket(`ws://${location.host}/stream`);
         this.ws.binaryType = "blob";
 
-        this.ws.onopen = () => UI.setNetworkStatus(true);
+        this.ws.onopen = () => {
+            UI.setNetworkStatus(true);
+            this.sendCommand("SET_PROMPT", AppState.autoFirePrompt);
+        }
         this.ws.onclose = () => {
             UI.setNetworkStatus(false);
             setTimeout(() => this.connect(), 1500); 

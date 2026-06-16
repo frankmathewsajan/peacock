@@ -3,6 +3,8 @@ import ctypes
 import sys
 import keyboard
 import queue
+import threading
+import re
 
 # --- Windows API Constants ---
 SW_HIDE = 0
@@ -10,44 +12,50 @@ SW_SHOWNOACTIVATE = 4
 WDA_EXCLUDEFROMCAPTURE = 17
 GWL_EXSTYLE = -20
 WS_EX_TRANSPARENT = 0x00000020
-WS_EX_NOACTIVATE = 0x08000000  # <- The Holy Grail of non-interrupting overlays
+WS_EX_NOACTIVATE = 0x08000000
 
 
 class StealthTeleprompter:
-    """
-    A daemonized Tkinter instance that polls a thread-safe queue for live
-    updates from the ASGI web server, ensuring no GIL deadlocks.
-    """
-
-    def __init__(self, root, command_queue: queue.Queue):
+    def __init__(self, root, command_queue: queue.Queue, on_analyze_callback=None):
         self.root = root
         self.q = command_queue
+        self.on_analyze = on_analyze_callback
         self.key_buffer = []
 
         self.is_visible = True
         self.is_dark_mode = True
         self.is_intangible = False
+
+        self.history = ["[ Awaiting Live Sync... ]"]
+        self.history_idx = 0
+
         self._drag_start_x = 0
         self._drag_start_y = 0
+        self._resize_start_x = 0
+        self._resize_start_y = 0
+        self._resize_start_w = 0
+        self._resize_start_h = 0
 
         self._initialize_ui()
         self._apply_stealth_mechanics()
         self._bind_events()
 
-        # Start the queue polling loop (executes strictly on the Tkinter thread)
         self.root.after(50, self._process_queue)
 
     def _process_queue(self):
-        """Pulls network commands from the web server and updates the UI state."""
         try:
             while True:
                 msg = self.q.get_nowait()
                 action = msg.get("action")
 
                 if action == "PROMPTER_SYNC":
-                    self.content_label.configure(text=msg.get("text", ""))
+                    text = msg.get("text", "")
+                    if text != self.history[-1]:
+                        self.history.append(text)
+                        self.history_idx = len(self.history) - 1
+                    self._render_markdown(text)
                 elif action == "PROMPTER_CLEAR":
-                    self.content_label.configure(text="")
+                    self._render_markdown("")
                 elif action == "PROMPTER_HIDE":
                     self._hide()
                 elif action == "PROMPTER_SHOW":
@@ -65,59 +73,217 @@ class StealthTeleprompter:
         self.root.after(50, self._process_queue)
 
     def _initialize_ui(self):
-        self.root.geometry("550x250")
+        self.root.geometry("600x400")
         self.root.attributes("-toolwindow", True)
         self.root.overrideredirect(True)
-        self.root.attributes("-alpha", 0.80)
+        self.root.attributes("-alpha", 0.85)
         self.root.attributes("-topmost", True)
 
-        self.theme_btn = tk.Button(
-            self.root,
+        # --- TOP CONTROL BAR ---
+        self.top_bar = tk.Frame(self.root, height=35)
+        self.top_bar.pack(side="top", fill="x")
+        self.top_bar.pack_propagate(False)
+
+        self.btn_prev = tk.Button(
+            self.top_bar,
+            text="◄",
+            font=("Arial", 10, "bold"),
+            bd=0,
+            cursor="hand2",
+            command=self._history_prev,
+        )
+        self.btn_prev.pack(side="left", padx=(5, 2), pady=5)
+
+        self.btn_next = tk.Button(
+            self.top_bar,
+            text="►",
+            font=("Arial", 10, "bold"),
+            bd=0,
+            cursor="hand2",
+            command=self._history_next,
+        )
+        self.btn_next.pack(side="left", padx=(0, 5), pady=5)
+
+        self.btn_hide = tk.Button(
+            self.top_bar,
+            text="✖",
+            font=("Arial", 10),
+            bd=0,
+            cursor="hand2",
+            command=self._hide,
+        )
+        self.btn_hide.pack(side="right", padx=(2, 5), pady=5)
+
+        self.btn_theme = tk.Button(
+            self.top_bar,
             text="🌓",
-            font=("Arial", 12),
+            font=("Arial", 10),
             bd=0,
             cursor="hand2",
             command=self._toggle_theme,
         )
-        self.theme_btn.place(relx=0.98, rely=0.02, anchor="ne")
+        self.btn_theme.pack(side="right", padx=2, pady=5)
 
-        self.content_label = tk.Label(
-            self.root,
-            text="[ Awaiting Live Sync... ]",
-            font=("Georgia", 14, "italic"),
-            justify="center",
-            wraplength=500,
+        self.btn_analyze = tk.Button(
+            self.top_bar,
+            text="✨",
+            font=("Arial", 10),
+            bd=0,
+            cursor="hand2",
+            command=self._trigger_analysis,
         )
-        self.content_label.pack(expand=True, padx=20, pady=20)
+        self.btn_analyze.pack(side="right", padx=2, pady=5)
 
-        self.quit_label = tk.Label(
-            self.root,
-            text="[Click and press ESC to close] | zxcv/vcxz = Intangibility | asdf/fdsa = Visibility",
-            font=("Arial", 7),
+        self.drag_handle = tk.Label(
+            self.top_bar,
+            text="≡ PEACOCK HUD ≡",
+            font=("Arial", 8, "bold"),
+            cursor="fleur",
         )
-        self.quit_label.pack(side="bottom", pady=5)
+        self.drag_handle.pack(side="left", fill="both", expand=True)
+
+        # --- MAIN CONTENT AREA ---
+        self.content_frame = tk.Frame(self.root)
+        self.content_frame.pack(side="top", fill="both", expand=True, padx=15, pady=10)
+
+        # Removed the visual Scrollbar widget entirely to keep it clean.
+        self.text_area = tk.Text(
+            self.content_frame,
+            wrap="word",
+            font=("Segoe UI", 12),
+            bd=0,
+            highlightthickness=0,
+            cursor="arrow",  # Use standard arrow since text selection is disabled
+        )
+        self.text_area.pack(side="left", fill="both", expand=True)
+
+        # --- MARKDOWN STYLING TAGS ---
+        self.text_area.tag_configure(
+            "h1", font=("Segoe UI", 18, "bold"), spacing1=10, spacing3=5
+        )
+        self.text_area.tag_configure(
+            "h2", font=("Segoe UI", 16, "bold"), spacing1=8, spacing3=4
+        )
+        self.text_area.tag_configure(
+            "h3", font=("Segoe UI", 14, "bold"), spacing1=5, spacing3=2
+        )
+        self.text_area.tag_configure("bold", font=("Segoe UI", 12, "bold"))
+        self.text_area.tag_configure("italic", font=("Segoe UI", 12, "italic"))
+        self.text_area.tag_configure(
+            "code", font=("Consolas", 11), background="#2d2d2d", foreground="#a6e22e"
+        )
+        self.text_area.tag_configure("bullet", font=("Segoe UI", 14, "bold"))
+
+        # --- RESIZE GRIP ---
+        self.resize_grip = tk.Label(
+            self.root, text="◢", font=("Arial", 10), cursor="size_nw_se"
+        )
+        self.resize_grip.place(relx=1.0, rely=1.0, anchor="se")
+
         self._apply_colors()
+        self._render_markdown(self.history[0])
+
+    def _render_markdown(self, text):
+        """Advanced parser to handle standard LLM Markdown outputs."""
+        self.text_area.config(state="normal")
+        self.text_area.delete(1.0, tk.END)
+
+        lines = text.split("\n")
+        in_code_block = False
+
+        for line in lines:
+            # Handle Code Blocks
+            if line.strip().startswith("```"):
+                in_code_block = not in_code_block
+                continue
+
+            if in_code_block:
+                self.text_area.insert(tk.END, line + "\n", "code")
+                continue
+
+            # Handle Headers
+            if line.startswith("# "):
+                self.text_area.insert(tk.END, line[2:] + "\n", "h1")
+                continue
+            elif line.startswith("## "):
+                self.text_area.insert(tk.END, line[3:] + "\n", "h2")
+                continue
+            elif line.startswith("### "):
+                self.text_area.insert(tk.END, line[4:] + "\n", "h3")
+                continue
+
+            # Handle Bullets
+            is_bullet = False
+            if line.strip().startswith("- ") or line.strip().startswith("* "):
+                self.text_area.insert(tk.END, "  •  ", "bullet")
+                line = line.strip()[2:]
+                is_bullet = True
+
+            # Handle Inline Styles (Bold/Italic)
+            tokens = re.split(r"(\*\*.*?\*\*|\*.*?\*|_.*?_)", line)
+            for token in tokens:
+                if token.startswith("**") and token.endswith("**"):
+                    self.text_area.insert(tk.END, token[2:-2], "bold")
+                elif (token.startswith("*") and token.endswith("*")) or (
+                    token.startswith("_") and token.endswith("_")
+                ):
+                    self.text_area.insert(tk.END, token[1:-1], "italic")
+                else:
+                    self.text_area.insert(tk.END, token)
+
+            self.text_area.insert(tk.END, "\n")
+
+        self.text_area.config(state="disabled")
+        self.text_area.yview_moveto(1.0)
+
+    def _history_prev(self):
+        if self.history_idx > 0:
+            self.history_idx -= 1
+            self._render_markdown(self.history[self.history_idx])
+
+    def _history_next(self):
+        if self.history_idx < len(self.history) - 1:
+            self.history_idx += 1
+            self._render_markdown(self.history[self.history_idx])
+
+    def _trigger_analysis(self):
+        if self.on_analyze:
+            threading.Thread(target=self.on_analyze, daemon=True).start()
 
     def _apply_colors(self):
         if self.is_intangible:
-            self.content_label.configure(fg="#00FF00")
+            self.text_area.config(fg="#00FF00")
             return
 
-        bg_color, fg_color, btn_active = (
-            ("black", "#E0E0E0", "#333333")
+        bg_color, fg_color, top_bg = (
+            ("black", "#E0E0E0", "#111111")
             if self.is_dark_mode
-            else ("#F5F5F5", "#111111", "#CCCCCC")
+            else ("#F5F5F5", "#111111", "#E0E0E0")
         )
 
         self.root.configure(bg=bg_color)
-        self.content_label.configure(bg=bg_color, fg=fg_color)
-        self.quit_label.configure(bg=bg_color, fg=fg_color)
-        self.theme_btn.configure(
-            bg=bg_color,
-            fg=fg_color,
-            activebackground=btn_active,
-            activeforeground=fg_color,
-        )
+        self.content_frame.configure(bg=bg_color)
+
+        # Disable the visual cursor block entirely
+        self.text_area.configure(bg=bg_color, fg=fg_color, insertbackground=bg_color)
+
+        self.top_bar.configure(bg=top_bg)
+        self.drag_handle.configure(bg=top_bg, fg=fg_color)
+        self.resize_grip.configure(bg=bg_color, fg=fg_color)
+
+        for btn in (
+            self.btn_prev,
+            self.btn_next,
+            self.btn_theme,
+            self.btn_analyze,
+            self.btn_hide,
+        ):
+            btn.configure(
+                bg=top_bg,
+                fg=fg_color,
+                activebackground=bg_color,
+                activeforeground=fg_color,
+            )
 
     def _toggle_theme(self):
         self.is_dark_mode = not self.is_dark_mode
@@ -127,34 +293,50 @@ class StealthTeleprompter:
         self.root.update()
         self.hwnd = int(self.root.wm_frame(), 16)
         if sys.platform == "win32":
-            # 1. Exclude from screen capture
             ctypes.windll.user32.SetWindowDisplayAffinity(
                 self.hwnd, WDA_EXCLUDEFROMCAPTURE
             )
-            # 2. Prevent window from stealing focus when physically clicked
             ex_style = ctypes.windll.user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
             ctypes.windll.user32.SetWindowLongW(
                 self.hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE
             )
 
     def _bind_events(self):
-        self.root.bind("<Button-1>", self._on_drag_start)
-        self.root.bind("<B1-Motion>", self._on_drag_motion)
+        self.drag_handle.bind("<Button-1>", self._on_drag_start)
+        self.drag_handle.bind("<B1-Motion>", self._on_drag_motion)
+
+        self.resize_grip.bind("<Button-1>", self._on_resize_start)
+        self.resize_grip.bind("<B1-Motion>", self._on_resize_motion)
+
+        # Mousewheel binding works globally over the text area
+        self.text_area.bind("<MouseWheel>", self._on_mousewheel)
+        self.drag_handle.bind("<MouseWheel>", self._on_mousewheel)
+
         self.root.bind("<Escape>", self._shutdown)
         keyboard.hook(self._on_global_key)
 
     def _on_drag_start(self, event):
-        if event.widget == self.theme_btn:
-            return
         self._drag_start_x = event.x
         self._drag_start_y = event.y
 
     def _on_drag_motion(self, event):
-        if event.widget == self.theme_btn:
-            return
         x = self.root.winfo_x() - self._drag_start_x + event.x
         y = self.root.winfo_y() - self._drag_start_y + event.y
         self.root.geometry(f"+{x}+{y}")
+
+    def _on_resize_start(self, event):
+        self._resize_start_x = event.x_root
+        self._resize_start_y = event.y_root
+        self._resize_start_w = self.root.winfo_width()
+        self._resize_start_h = self.root.winfo_height()
+
+    def _on_resize_motion(self, event):
+        new_w = max(300, self._resize_start_w + (event.x_root - self._resize_start_x))
+        new_h = max(150, self._resize_start_h + (event.y_root - self._resize_start_y))
+        self.root.geometry(f"{new_w}x{new_h}")
+
+    def _on_mousewheel(self, event):
+        self.text_area.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _on_global_key(self, event):
         if event.event_type == keyboard.KEY_DOWN and len(event.name) == 1:

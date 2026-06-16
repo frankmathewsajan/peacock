@@ -119,7 +119,7 @@ export const Modals = {
 
         document.getElementById('close-config-btn').addEventListener('click', () => {
             modal.classList.add('opacity-0', 'pointer-events-none');
-        });
+        }); 
 
         document.getElementById('save-config-btn').addEventListener('click', () => {
             const autoPrompt = document.getElementById('auto-prompt').value.trim();
@@ -130,6 +130,7 @@ export const Modals = {
 
             AppState.saveConfig(autoPrompt, newPrompts);
             UI.renderPrompts();
+            API.sendCommand("SET_PROMPT", autoPrompt);
             modal.classList.add('opacity-0', 'pointer-events-none');
         });
     },

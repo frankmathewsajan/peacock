@@ -2,6 +2,7 @@ import io
 import socket
 import json
 import sys
+import os
 import time
 import asyncio
 import queue
@@ -23,13 +24,14 @@ from dotenv import load_dotenv
 
 import tkinter as tk
 from chat_agent import analyze_screen
-from teleprompter import StealthTeleprompter  # Decoupled Teleprompter Logic
+from teleprompter import StealthTeleprompter
 
 load_dotenv()
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
 
 MODIFIER_KEY = "command" if sys.platform == "darwin" else "ctrl"
+LOCAL_PRESET_FILE = "presets.json"
 
 
 class StreamEvent(BaseModel):
@@ -37,6 +39,7 @@ class StreamEvent(BaseModel):
         "CAPTURE",
         "EXTRACT_TEXT",
         "PASTE",
+        "SET_PROMPT",
         "PROMPTER_SYNC",
         "PROMPTER_CLEAR",
         "PROMPTER_HIDE",
@@ -55,8 +58,30 @@ class ChatRequest(BaseModel):
 
 def _launch_teleprompter(q: queue.Queue):
     """Spawns Tkinter in a daemon thread so it doesn't block FastAPI."""
+
+    def local_analyze_callback():
+        q.put({"action": "PROMPTER_SYNC", "text": "[ Capturing & Analyzing Frame... ]"})
+        try:
+            # 1. Capture the screen (Stealth Window ignores itself natively)
+            img, _ = _sync_capture()
+
+            # 2. Read the latest prompt directly from the local hard drive
+            prompt = "Analyze this screen and provide key takeaways."
+            if os.path.exists(LOCAL_PRESET_FILE):
+                with open(LOCAL_PRESET_FILE, "r") as f:
+                    data = json.load(f)
+                    prompt = data.get("auto_prompt", prompt)
+
+            # 3. Run Inference
+            answer, tokens = analyze_screen(prompt, [img], "fast")
+
+            # 4. Sync result back to the glass pane
+            q.put({"action": "PROMPTER_SYNC", "text": answer})
+        except Exception as e:
+            q.put({"action": "PROMPTER_SYNC", "text": f"[ Analysis Failed: {str(e)} ]"})
+
     root = tk.Tk()
-    app = StealthTeleprompter(root, q)
+    app = StealthTeleprompter(root, q, on_analyze_callback=local_analyze_callback)
     root.mainloop()
 
 
@@ -133,8 +158,6 @@ async def process_chat(request_data: ChatRequest, request: Request):
 @app.websocket("/stream")
 async def capture_on_demand(websocket: WebSocket):
     await websocket.accept()
-
-    # FIX: We must retrieve the queue from the app state before using it!
     p_queue: queue.Queue = websocket.app.state.prompter_queue
 
     try:
@@ -145,7 +168,12 @@ async def capture_on_demand(websocket: WebSocket):
             except ValidationError:
                 continue
 
-            if event.action == "CAPTURE":
+            if event.action == "SET_PROMPT":
+                # Write config to disk to decouple the teleprompter from the phone session
+                with open(LOCAL_PRESET_FILE, "w") as f:
+                    json.dump({"auto_prompt": event.text}, f)
+
+            elif event.action == "CAPTURE":
                 img, buffer = await asyncio.to_thread(_sync_capture)
                 websocket.app.state.session_images.append(img)
                 await websocket.send_bytes(buffer.getvalue())
@@ -159,9 +187,7 @@ async def capture_on_demand(websocket: WebSocket):
             elif event.action == "PASTE":
                 await asyncio.to_thread(_sync_paste, event.text)
 
-            # --- ROUTING ENDPOINTS ---
             elif event.action.startswith("PROMPTER_"):
-                # Dynamically route any teleprompter command to the Tkinter Thread Queue
                 p_queue.put({"action": event.action, "text": event.text})
 
     except WebSocketDisconnect:
