@@ -12,7 +12,10 @@ export const API = {
 
         this.ws.onopen = () => {
             UI.setNetworkStatus(true);
-            this.sendCommand("SET_PROMPT", AppState.autoFirePrompt);
+            this.sendCommand("SET_CONFIG", JSON.stringify({
+                auto_prompt: AppState.autoFirePrompt,
+                presets: AppState.customPrompts
+            }));
         }
         this.ws.onclose = () => {
             UI.setNetworkStatus(false);

@@ -16,15 +16,25 @@ WS_EX_NOACTIVATE = 0x08000000
 
 
 class StealthTeleprompter:
-    def __init__(self, root, command_queue: queue.Queue, on_analyze_callback=None):
+    def __init__(
+        self,
+        root,
+        command_queue: queue.Queue,
+        config: dict,
+        on_analyze_callback=None,
+        on_capture_callback=None,
+    ):
         self.root = root
         self.q = command_queue
+        self.config = config
         self.on_analyze = on_analyze_callback
+        self.on_capture = on_capture_callback
         self.key_buffer = []
 
         self.is_visible = True
         self.is_dark_mode = True
         self.is_intangible = False
+        self.current_model = "fast"
 
         self.history = ["[ Awaiting Live Sync... ]"]
         self.history_idx = 0
@@ -66,6 +76,12 @@ class StealthTeleprompter:
                     self._make_solid()
                 elif action == "PROMPTER_THEME":
                     self._toggle_theme()
+                elif action == "PROMPTER_CONFIG":
+                    self.config = msg.get("config", self.config)
+                    self._apply_config_ui()
+                elif action == "PROMPTER_BUFFER_UPDATE":
+                    count = msg.get("count", 0)
+                    self.btn_plus.configure(text=f"➕ ({count})" if count > 0 else "➕")
 
         except queue.Empty:
             pass
@@ -73,7 +89,7 @@ class StealthTeleprompter:
         self.root.after(50, self._process_queue)
 
     def _initialize_ui(self):
-        self.root.geometry("600x400")
+        self.root.geometry("650x400")
         self.root.attributes("-toolwindow", True)
         self.root.overrideredirect(True)
         self.root.attributes("-alpha", 0.85)
@@ -84,6 +100,7 @@ class StealthTeleprompter:
         self.top_bar.pack(side="top", fill="x")
         self.top_bar.pack_propagate(False)
 
+        # Left Group: Nav & Model Toggle
         self.btn_prev = tk.Button(
             self.top_bar,
             text="◄",
@@ -104,6 +121,18 @@ class StealthTeleprompter:
         )
         self.btn_next.pack(side="left", padx=(0, 5), pady=5)
 
+        # Removed the invalid 'title' argument here
+        self.btn_model = tk.Button(
+            self.top_bar,
+            text="⚡",
+            font=("Arial", 10),
+            bd=0,
+            cursor="hand2",
+            command=self._toggle_model,
+        )
+        self.btn_model.pack(side="left", padx=2, pady=5)
+
+        # Right Group: Utilities (Packed right-to-left)
         self.btn_hide = tk.Button(
             self.top_bar,
             text="✖",
@@ -130,13 +159,34 @@ class StealthTeleprompter:
             font=("Arial", 10),
             bd=0,
             cursor="hand2",
-            command=self._trigger_analysis,
+            command=self._trigger_analyze,
         )
         self.btn_analyze.pack(side="right", padx=2, pady=5)
 
+        # Right Group: The 4 Presets
+        self.preset_btns = []
+        for i in reversed(range(4)):
+            btn = tk.Button(
+                self.top_bar, text="?", font=("Arial", 10), bd=0, cursor="hand2"
+            )
+            btn.pack(side="right", padx=1, pady=5)
+            self.preset_btns.insert(0, btn)  # Maintain visual left-to-right 0-3 order
+
+        # Right Group: Batch Capture
+        self.btn_plus = tk.Button(
+            self.top_bar,
+            text="➕",
+            font=("Arial", 10),
+            bd=0,
+            cursor="hand2",
+            command=self._trigger_capture,
+        )
+        self.btn_plus.pack(side="right", padx=(2, 5), pady=5)
+
+        # Center: Drag Handle (Updated Text)
         self.drag_handle = tk.Label(
             self.top_bar,
-            text="≡ PEACOCK HUD ≡",
+            text="",
             font=("Arial", 8, "bold"),
             cursor="fleur",
         )
@@ -146,18 +196,16 @@ class StealthTeleprompter:
         self.content_frame = tk.Frame(self.root)
         self.content_frame.pack(side="top", fill="both", expand=True, padx=15, pady=10)
 
-        # Removed the visual Scrollbar widget entirely to keep it clean.
         self.text_area = tk.Text(
             self.content_frame,
             wrap="word",
             font=("Segoe UI", 12),
             bd=0,
             highlightthickness=0,
-            cursor="arrow",  # Use standard arrow since text selection is disabled
+            cursor="arrow",
         )
         self.text_area.pack(side="left", fill="both", expand=True)
 
-        # --- MARKDOWN STYLING TAGS ---
         self.text_area.tag_configure(
             "h1", font=("Segoe UI", 18, "bold"), spacing1=10, spacing3=5
         )
@@ -180,11 +228,24 @@ class StealthTeleprompter:
         )
         self.resize_grip.place(relx=1.0, rely=1.0, anchor="se")
 
+        self._apply_config_ui()
         self._apply_colors()
         self._render_markdown(self.history[0])
 
+    def _apply_config_ui(self):
+        presets = self.config.get("presets", [])
+        for i, btn in enumerate(self.preset_btns):
+            if i < len(presets):
+                btn.configure(text=presets[i]["emoji"])
+                # Captures the variable securely in the lambda closure
+                btn.configure(
+                    command=lambda p=presets[i]["text"]: self._trigger_analyze(p)
+                )
+            else:
+                btn.configure(text="")
+                btn.configure(command=lambda: None)
+
     def _render_markdown(self, text):
-        """Advanced parser to handle standard LLM Markdown outputs."""
         self.text_area.config(state="normal")
         self.text_area.delete(1.0, tk.END)
 
@@ -192,16 +253,13 @@ class StealthTeleprompter:
         in_code_block = False
 
         for line in lines:
-            # Handle Code Blocks
             if line.strip().startswith("```"):
                 in_code_block = not in_code_block
                 continue
-
             if in_code_block:
                 self.text_area.insert(tk.END, line + "\n", "code")
                 continue
 
-            # Handle Headers
             if line.startswith("# "):
                 self.text_area.insert(tk.END, line[2:] + "\n", "h1")
                 continue
@@ -212,14 +270,12 @@ class StealthTeleprompter:
                 self.text_area.insert(tk.END, line[4:] + "\n", "h3")
                 continue
 
-            # Handle Bullets
             is_bullet = False
             if line.strip().startswith("- ") or line.strip().startswith("* "):
                 self.text_area.insert(tk.END, "  •  ", "bullet")
                 line = line.strip()[2:]
                 is_bullet = True
 
-            # Handle Inline Styles (Bold/Italic)
             tokens = re.split(r"(\*\*.*?\*\*|\*.*?\*|_.*?_)", line)
             for token in tokens:
                 if token.startswith("**") and token.endswith("**"):
@@ -246,9 +302,29 @@ class StealthTeleprompter:
             self.history_idx += 1
             self._render_markdown(self.history[self.history_idx])
 
-    def _trigger_analysis(self):
+    def _toggle_model(self):
+        if self.current_model == "fast":
+            self.current_model = "deep"
+            self.btn_model.configure(text="🧠")
+        else:
+            self.current_model = "fast"
+            self.btn_model.configure(text="⚡")
+
+    def _trigger_capture(self):
+        if self.on_capture:
+            threading.Thread(target=self.on_capture, daemon=True).start()
+
+    def _trigger_analyze(self, prompt_text=None):
+        if prompt_text is None:
+            prompt_text = self.config.get(
+                "auto_prompt", "Analyze this screen and provide key takeaways."
+            )
         if self.on_analyze:
-            threading.Thread(target=self.on_analyze, daemon=True).start()
+            threading.Thread(
+                target=self.on_analyze,
+                args=(prompt_text, self.current_model),
+                daemon=True,
+            ).start()
 
     def _apply_colors(self):
         if self.is_intangible:
@@ -263,21 +339,22 @@ class StealthTeleprompter:
 
         self.root.configure(bg=bg_color)
         self.content_frame.configure(bg=bg_color)
-
-        # Disable the visual cursor block entirely
         self.text_area.configure(bg=bg_color, fg=fg_color, insertbackground=bg_color)
 
         self.top_bar.configure(bg=top_bg)
         self.drag_handle.configure(bg=top_bg, fg=fg_color)
         self.resize_grip.configure(bg=bg_color, fg=fg_color)
 
-        for btn in (
+        buttons = [
             self.btn_prev,
             self.btn_next,
-            self.btn_theme,
+            self.btn_model,
+            self.btn_plus,
             self.btn_analyze,
+            self.btn_theme,
             self.btn_hide,
-        ):
+        ] + self.preset_btns
+        for btn in buttons:
             btn.configure(
                 bg=top_bg,
                 fg=fg_color,
@@ -304,11 +381,9 @@ class StealthTeleprompter:
     def _bind_events(self):
         self.drag_handle.bind("<Button-1>", self._on_drag_start)
         self.drag_handle.bind("<B1-Motion>", self._on_drag_motion)
-
         self.resize_grip.bind("<Button-1>", self._on_resize_start)
         self.resize_grip.bind("<B1-Motion>", self._on_resize_motion)
 
-        # Mousewheel binding works globally over the text area
         self.text_area.bind("<MouseWheel>", self._on_mousewheel)
         self.drag_handle.bind("<MouseWheel>", self._on_mousewheel)
 
@@ -331,8 +406,8 @@ class StealthTeleprompter:
         self._resize_start_h = self.root.winfo_height()
 
     def _on_resize_motion(self, event):
-        new_w = max(300, self._resize_start_w + (event.x_root - self._resize_start_x))
-        new_h = max(150, self._resize_start_h + (event.y_root - self._resize_start_y))
+        new_w = max(350, self._resize_start_w + (event.x_root - self._resize_start_x))
+        new_h = max(200, self._resize_start_h + (event.y_root - self._resize_start_y))
         self.root.geometry(f"{new_w}x{new_h}")
 
     def _on_mousewheel(self, event):

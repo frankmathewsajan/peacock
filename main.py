@@ -39,7 +39,7 @@ class StreamEvent(BaseModel):
         "CAPTURE",
         "EXTRACT_TEXT",
         "PASTE",
-        "SET_PROMPT",
+        "SET_CONFIG",
         "PROMPTER_SYNC",
         "PROMPTER_CLEAR",
         "PROMPTER_HIDE",
@@ -56,41 +56,93 @@ class ChatRequest(BaseModel):
     model_tier: str = "fast"
 
 
-def _launch_teleprompter(q: queue.Queue):
-    """Spawns Tkinter in a daemon thread so it doesn't block FastAPI."""
-
-    def local_analyze_callback():
-        q.put({"action": "PROMPTER_SYNC", "text": "[ Capturing & Analyzing Frame... ]"})
+def load_local_config():
+    """Loads presets from disk for autonomous operation."""
+    default_config = {
+        "auto_prompt": "Analyze this screen and provide key takeaways.",
+        "presets": [
+            {"emoji": "🦚", "text": "Summarize this slide concisely"},
+            {"emoji": "🌿", "text": "Extract all text exactly as written"},
+            {"emoji": "🦉", "text": "Explain the core concept"},
+            {"emoji": "🦊", "text": "Provide the primary action item."},
+        ],
+    }
+    if os.path.exists(LOCAL_PRESET_FILE):
         try:
-            # 1. Capture the screen (Stealth Window ignores itself natively)
+            with open(LOCAL_PRESET_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                default_config["auto_prompt"] = data.get(
+                    "auto_prompt", default_config["auto_prompt"]
+                )
+                default_config["presets"] = data.get(
+                    "presets", default_config["presets"]
+                )
+        except Exception:
+            pass
+    return default_config
+
+
+def _launch_teleprompter(q: queue.Queue, config: dict):
+    """Spawns Tkinter in a daemon thread."""
+    local_image_buffer = []
+
+    def handle_capture():
+        """Batch capture logic: stores images silently."""
+        try:
             img, _ = _sync_capture()
+            local_image_buffer.append(img)
+            q.put(
+                {"action": "PROMPTER_BUFFER_UPDATE", "count": len(local_image_buffer)}
+            )
+        except Exception:
+            pass
 
-            # 2. Read the latest prompt directly from the local hard drive
-            prompt = "Analyze this screen and provide key takeaways."
-            if os.path.exists(LOCAL_PRESET_FILE):
-                with open(LOCAL_PRESET_FILE, "r") as f:
-                    data = json.load(f)
-                    prompt = data.get("auto_prompt", prompt)
+    def handle_analyze(prompt_text, model_tier):
+        """Processes either the batched images or a single fresh screenshot."""
+        q.put(
+            {
+                "action": "PROMPTER_SYNC",
+                "text": f"[ Processing with {model_tier.upper()} mode... ]",
+            }
+        )
+        try:
+            images_to_analyze = []
 
-            # 3. Run Inference
-            answer, tokens = analyze_screen(prompt, [img], "fast")
+            # If batch buffer has images, use them and clear it.
+            if len(local_image_buffer) > 0:
+                images_to_analyze = list(local_image_buffer)
+                local_image_buffer.clear()
+                q.put({"action": "PROMPTER_BUFFER_UPDATE", "count": 0})
+            else:
+                # Fallback to single instant screenshot
+                img, _ = _sync_capture()
+                images_to_analyze = [img]
 
-            # 4. Sync result back to the glass pane
+            answer, tokens = analyze_screen(prompt_text, images_to_analyze, model_tier)
             q.put({"action": "PROMPTER_SYNC", "text": answer})
         except Exception as e:
             q.put({"action": "PROMPTER_SYNC", "text": f"[ Analysis Failed: {str(e)} ]"})
 
     root = tk.Tk()
-    app = StealthTeleprompter(root, q, on_analyze_callback=local_analyze_callback)
+    app = StealthTeleprompter(
+        root,
+        q,
+        config,
+        on_analyze_callback=handle_analyze,
+        on_capture_callback=handle_capture,
+    )
     root.mainloop()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Boot up the Teleprompter Thread
     app.state.prompter_queue = queue.Queue()
+    app.state.shared_config = load_local_config()
+
     tk_thread = threading.Thread(
-        target=_launch_teleprompter, args=(app.state.prompter_queue,), daemon=True
+        target=_launch_teleprompter,
+        args=(app.state.prompter_queue, app.state.shared_config),
+        daemon=True,
     )
     tk_thread.start()
 
@@ -159,6 +211,7 @@ async def process_chat(request_data: ChatRequest, request: Request):
 async def capture_on_demand(websocket: WebSocket):
     await websocket.accept()
     p_queue: queue.Queue = websocket.app.state.prompter_queue
+    config: dict = websocket.app.state.shared_config
 
     try:
         while True:
@@ -168,10 +221,16 @@ async def capture_on_demand(websocket: WebSocket):
             except ValidationError:
                 continue
 
-            if event.action == "SET_PROMPT":
-                # Write config to disk to decouple the teleprompter from the phone session
-                with open(LOCAL_PRESET_FILE, "w") as f:
-                    json.dump({"auto_prompt": event.text}, f)
+            if event.action == "SET_CONFIG":
+                try:
+                    new_config = json.loads(event.text)
+                    with open(LOCAL_PRESET_FILE, "w", encoding="utf-8") as f:
+                        json.dump(new_config, f)
+
+                    config.update(new_config)
+                    p_queue.put({"action": "PROMPTER_CONFIG", "config": new_config})
+                except Exception as e:
+                    print("Config Save Failed:", e)
 
             elif event.action == "CAPTURE":
                 img, buffer = await asyncio.to_thread(_sync_capture)

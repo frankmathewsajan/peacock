@@ -1,1 +1,1 @@
-{"auto_prompt": "Analyse the screen and tell the details and what's going on"}
+{"auto_prompt": "Analyze this screen and provide key takeaways.", "presets": [{"emoji": "\ud83e\udd9a", "text": "Summarize this slide concisely"}, {"emoji": "\ud83c\udf3f", "text": "Extract all text exactly as written"}, {"emoji": "\ud83e\udd89", "text": "Explain the core concept"}, {"emoji": "\ud83e\udd8a", "text": "Provide the primary action item."}]}

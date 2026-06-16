@@ -130,7 +130,10 @@ export const Modals = {
 
             AppState.saveConfig(autoPrompt, newPrompts);
             UI.renderPrompts();
-            API.sendCommand("SET_PROMPT", autoPrompt);
+            API.sendCommand("SET_CONFIG", JSON.stringify({
+                auto_prompt: autoPrompt,
+                presets: newPrompts
+            }));
             modal.classList.add('opacity-0', 'pointer-events-none');
         });
     },
