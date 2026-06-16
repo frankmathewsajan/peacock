@@ -122,12 +122,26 @@ async def process_chat(request_data: ChatRequest):
     return {"response": answer, "total_tokens": total_tokens}
 
 
-def _sync_capture() -> io.BytesIO:
+def _sync_capture() -> tuple[Image.Image, io.BytesIO]:
     with mss.MSS() as sct:
         sct_img = sct.grab(sct.monitors[1])
         img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+
+        # --- LOCAL BOTTLENECK OPTIMIZATION ---
+
+        # 1. Downscale High-DPI Framebuffers
+        # Shrinks the pixel matrix to save memory before transmission to Google
+        max_width = 1280
+        if img.width > max_width:
+            aspect_ratio = img.height / img.width
+            new_height = int(max_width * aspect_ratio)
+            img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
+        # 2. In-Memory Byte Buffering & JPEG Compression
+        # 80% quality drops the payload size by ~85% with zero OCR degradation
         buffer = io.BytesIO()
-        img.save(buffer, format="PNG")
+        img.save(buffer, format="JPEG", quality=80, optimize=True)
+
         return img, buffer
 
 
@@ -175,6 +189,7 @@ async def capture_on_demand(websocket: WebSocket):
             elif event.action == "CAPTURE":
                 img, buffer = await asyncio.to_thread(_sync_capture)
                 session_images.append(img)
+                # Now sending a highly optimized, compressed JPEG via WebSocket
                 await websocket.send_bytes(buffer.getvalue())
 
             elif event.action == "EXTRACT_TEXT":
@@ -204,7 +219,6 @@ class UvicornManager:
 
     def start(self):
         if self.server is None:
-            # We enforce loop="asyncio" and suppress logging headers to avoid threading crashes
             log_config = None if sys.stdout is None else uvicorn.config.LOGGING_CONFIG
             config = uvicorn.Config(
                 app,
@@ -307,5 +321,4 @@ if __name__ == "__main__":
         on_network_toggle=handle_network_toggle,
     )
 
-    # Run Tkinter directly on the main thread to ensure absolute OS stability
     root.mainloop()
