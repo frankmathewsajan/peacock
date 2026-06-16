@@ -6,6 +6,7 @@ import threading
 import json
 import os
 import re
+import gc  # Added for aggressive memory management
 
 # --- Windows API Constants ---
 SW_HIDE = 0
@@ -13,7 +14,7 @@ SW_SHOWNOACTIVATE = 4
 WDA_EXCLUDEFROMCAPTURE = 17
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
-WS_EX_TOOLWINDOW = 0x00000080  # Prevents Alt-Tab and Taskbar visibility
+WS_EX_TOOLWINDOW = 0x00000080
 
 STATE_FILE = "peacock_state.json"
 
@@ -26,17 +27,19 @@ class StealthTeleprompter:
         config: dict,
         on_analyze_callback=None,
         on_capture_callback=None,
+        on_network_toggle=None,  # New callback for the Uvicorn server
     ):
         self.root = root
         self.q = command_queue
         self.config = config
         self.on_analyze = on_analyze_callback
         self.on_capture = on_capture_callback
+        self.on_network_toggle = on_network_toggle
 
         self.current_model = "fast"
+        self.is_server_online = True
         self.saved_state = self._load_state()
 
-        # Load dynamic state variables
         self.is_dark_mode = self.saved_state.get("is_dark_mode", True)
         self.is_minimized = self.saved_state.get("is_minimized", False)
         self.history = self.saved_state.get("history", ["-> <3"])
@@ -47,11 +50,9 @@ class StealthTeleprompter:
         self._apply_stealth_mechanics(self.root)
         self._bind_events()
 
-        # Render initial history payload with proper Markdown
         self._render_markdown(self.history[self.history_idx])
         self._apply_colors()
 
-        # Micro-delay to ensure window handles are established by the OS before hiding/showing
         self.root.after(50, self._apply_initial_visibility)
         self.root.after(100, self._process_queue)
 
@@ -70,7 +71,7 @@ class StealthTeleprompter:
             "icon_geo": self.icon_root.geometry(),
             "is_dark_mode": self.is_dark_mode,
             "is_minimized": self.is_minimized,
-            "history": self.history[-50:],  # Cap history to prevent memory bloat
+            "history": self.history[-50:],
             "history_idx": self.history_idx,
         }
         try:
@@ -115,7 +116,6 @@ class StealthTeleprompter:
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#111111")
 
-        # Top Bar
         self.top_bar = tk.Frame(self.root, height=35, bg="#111111")
         self.top_bar.pack(side="top", fill="x")
         self.top_bar.pack_propagate(False)
@@ -135,7 +135,6 @@ class StealthTeleprompter:
         )
         self.btn_model.pack(side="left", padx=2)
 
-        # Padding then Broom & Opacity Controls
         tk.Frame(self.left_frame, width=10, bg="#111111").pack(side="left")
         tk.Button(
             self.left_frame,
@@ -161,6 +160,19 @@ class StealthTeleprompter:
             command=lambda: self._set_opacity(0.85),
         ).pack(side="left", padx=2)
 
+        # --- NEW: Network Toggle Button ---
+        tk.Frame(self.left_frame, width=10, bg="#111111").pack(side="left")
+        self.btn_net = tk.Button(
+            self.left_frame,
+            text="🛜",
+            fg="#00FF00",
+            bd=0,
+            takefocus=0,
+            font=("Arial", 10),
+            command=self._toggle_network,
+        )
+        self.btn_net.pack(side="left", padx=2)
+
         # --- RIGHT SUB-FRAME ---
         self.right_frame = tk.Frame(self.top_bar, bg="#111111")
         self.right_frame.pack(side="right", fill="y")
@@ -185,6 +197,7 @@ class StealthTeleprompter:
             takefocus=0,
         )
         self.lbl_buffer.pack(side="right", padx=1)
+
         tk.Button(
             self.right_frame,
             text="➕",
@@ -192,7 +205,6 @@ class StealthTeleprompter:
             takefocus=0,
             command=self._trigger_capture,
         ).pack(side="right", padx=1)
-
         tk.Button(
             self.right_frame,
             text="✨",
@@ -220,7 +232,6 @@ class StealthTeleprompter:
         )
         self.text_area.pack(side="top", fill="both", expand=True, padx=10, pady=10)
 
-        # Re-inject Markdown Tag Configurations
         self.text_area.tag_configure(
             "h1", font=("Segoe UI", 18, "bold"), spacing1=10, spacing3=5
         )
@@ -244,11 +255,18 @@ class StealthTeleprompter:
 
         self._rebuild_presets()
 
+    def _toggle_network(self):
+        if self.on_network_toggle:
+            self.is_server_online = not self.is_server_online
+            self.btn_net.config(fg="#00FF00" if self.is_server_online else "#FF0000")
+            threading.Thread(
+                target=self.on_network_toggle,
+                args=(self.is_server_online,),
+                daemon=True,
+            ).start()
+
     def _update_buffer_count(self, count):
-        if count > 0:
-            self.lbl_buffer.config(text=f"[{count}]")
-        else:
-            self.lbl_buffer.config(text="")
+        self.lbl_buffer.config(text=f"[{count}]" if count > 0 else "")
 
     def _rebuild_presets(self):
         for widget in self.preset_frame.winfo_children():
@@ -357,6 +375,9 @@ class StealthTeleprompter:
             self.root.withdraw()
             self.icon_root.deiconify()
 
+        # AGGRESSIVE MEMORY MANAGEMENT: Flush RAM when hiding to save resources 24/7
+        gc.collect()
+
     def _restore_from_icon(self):
         self.is_minimized = False
         self._save_state()
@@ -370,7 +391,6 @@ class StealthTeleprompter:
             self.root.deiconify()
 
     def _render_markdown(self, text):
-        """Restored RESTORED Rich Markdown Parser"""
         self.text_area.config(state="normal")
         self.text_area.delete(1.0, tk.END)
 
@@ -410,7 +430,6 @@ class StealthTeleprompter:
                     self.text_area.insert(tk.END, token[1:-1], "italic")
                 else:
                     self.text_area.insert(tk.END, token)
-
             self.text_area.insert(tk.END, "\n")
 
         self.text_area.config(state="disabled")
@@ -463,6 +482,7 @@ class StealthTeleprompter:
 
         self.lbl_buffer.configure(bg=bg, fg="#00FF00")
         self.text_area.configure(bg=bg, fg=fg)
+        self.btn_net.config(fg="#00FF00" if self.is_server_online else "#FF0000")
 
     def _toggle_theme(self):
         self.is_dark_mode = not self.is_dark_mode
@@ -470,7 +490,6 @@ class StealthTeleprompter:
         self._save_state()
 
     def _bind_events(self):
-        # 1. Bind passive surfaces
         passive_surfaces = [
             self.root,
             self.top_bar,
@@ -478,13 +497,11 @@ class StealthTeleprompter:
             self.right_frame,
             self.preset_frame,
         ]
-
         for widget in passive_surfaces:
             widget.bind("<ButtonPress-1>", self._on_drag_start)
             widget.bind("<B1-Motion>", self._on_drag_motion)
             widget.bind("<ButtonRelease-1>", lambda e: self._save_state())
 
-        # 2. Bind aggressive surfaces (Text Area) with explicit event annihilation
         self.text_area.bind("<ButtonPress-1>", self._on_text_drag_start)
         self.text_area.bind("<B1-Motion>", self._on_drag_motion)
         self.text_area.bind("<ButtonRelease-1>", lambda e: self._save_state())
@@ -493,18 +510,10 @@ class StealthTeleprompter:
         self.resize_grip.bind("<B1-Motion>", self._on_resize_motion)
         self.resize_grip.bind("<ButtonRelease-1>", lambda e: self._save_state())
 
-        # RESTORED: Manual Scroll Event Routing
         self.text_area.bind("<MouseWheel>", self._on_mousewheel)
-        for frame in [
-            self.root,
-            self.top_bar,
-            self.left_frame,
-            self.right_frame,
-            self.preset_frame,
-        ]:
+        for frame in passive_surfaces:
             frame.bind("<MouseWheel>", self._on_mousewheel)
 
-    # --- ABSOLUTE EVENT ROUTING ---
     def _on_text_drag_start(self, e):
         self._on_drag_start(e)
         return "break"
@@ -531,7 +540,6 @@ class StealthTeleprompter:
         h = max(200, self._resize_start_h + (e.y_root - self._resize_start_y))
         self.root.geometry(f"{w}x{h}")
 
-    # RESTORED: Mousewheel logic
     def _on_mousewheel(self, e):
         self.text_area.yview_scroll(int(-1 * (e.delta / 120)), "units")
         return "break"

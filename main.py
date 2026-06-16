@@ -7,7 +7,6 @@ import time
 import asyncio
 import queue
 import threading
-from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
@@ -29,9 +28,14 @@ from teleprompter import StealthTeleprompter
 load_dotenv()
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0
-
 MODIFIER_KEY = "command" if sys.platform == "darwin" else "ctrl"
 LOCAL_PRESET_FILE = "presets.json"
+
+
+def get_asset_path(relative_path: str) -> str:
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
 
 
 class StreamEvent(BaseModel):
@@ -57,7 +61,6 @@ class ChatRequest(BaseModel):
 
 
 def load_local_config():
-    """Loads presets from disk for autonomous operation."""
     default_config = {
         "auto_prompt": "Analyze this screen and provide key takeaways.",
         "presets": [
@@ -82,77 +85,41 @@ def load_local_config():
     return default_config
 
 
-def _launch_teleprompter(q: queue.Queue, config: dict):
-    """Spawns Tkinter in a daemon thread."""
-    local_image_buffer = []
+# --- GLOBAL STATE ---
+global_queue = queue.Queue()
+global_config = load_local_config()
+session_images = []
+total_tokens = 0
 
-    def handle_capture():
-        """Batch capture logic: stores images silently."""
-        try:
-            img, _ = _sync_capture()
-            local_image_buffer.append(img)
-            q.put(
-                {"action": "PROMPTER_BUFFER_UPDATE", "count": len(local_image_buffer)}
-            )
-        except Exception:
-            pass
+app = FastAPI()
+app.mount("/static", StaticFiles(directory=get_asset_path("static")), name="static")
 
-    def handle_analyze(prompt_text, model_tier):
-        """Processes either the batched images or a single fresh screenshot."""
-        q.put(
-            {
-                "action": "PROMPTER_SYNC",
-                "text": f"[ Processing with {model_tier.upper()} mode... ]",
-            }
-        )
-        try:
-            images_to_analyze = []
 
-            # If batch buffer has images, use them and clear it.
-            if len(local_image_buffer) > 0:
-                images_to_analyze = list(local_image_buffer)
-                local_image_buffer.clear()
-                q.put({"action": "PROMPTER_BUFFER_UPDATE", "count": 0})
-            else:
-                # Fallback to single instant screenshot
-                img, _ = _sync_capture()
-                images_to_analyze = [img]
+@app.get("/")
+async def serve_index():
+    return FileResponse(get_asset_path("static/index.html"))
 
-            answer, tokens = analyze_screen(prompt_text, images_to_analyze, model_tier)
-            q.put({"action": "PROMPTER_SYNC", "text": answer})
-        except Exception as e:
-            q.put({"action": "PROMPTER_SYNC", "text": f"[ Analysis Failed: {str(e)} ]"})
 
-    root = tk.Tk()
-    app = StealthTeleprompter(
-        root,
-        q,
-        config,
-        on_analyze_callback=handle_analyze,
-        on_capture_callback=handle_capture,
+@app.get("/tokens")
+async def get_tokens():
+    return {"total_used": total_tokens}
+
+
+@app.post("/chat")
+async def process_chat(request_data: ChatRequest):
+    global total_tokens, session_images
+    if not session_images and not request_data.message:
+        return {
+            "response": "System Error: Prompt or context required.",
+            "total_tokens": total_tokens,
+        }
+
+    answer, tokens_used = analyze_screen(
+        request_data.message, session_images, request_data.model_tier
     )
-    root.mainloop()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    app.state.prompter_queue = queue.Queue()
-    app.state.shared_config = load_local_config()
-
-    tk_thread = threading.Thread(
-        target=_launch_teleprompter,
-        args=(app.state.prompter_queue, app.state.shared_config),
-        daemon=True,
-    )
-    tk_thread.start()
-
-    app.state.session_images = []
-    app.state.total_tokens = 0
-    yield
-
-
-app = FastAPI(lifespan=lifespan)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+    total_tokens += tokens_used
+    session_images.clear()
+    return {"response": answer, "total_tokens": total_tokens}
 
 
 def _sync_capture() -> io.BytesIO:
@@ -180,38 +147,10 @@ def _sync_paste(text: str):
     pyautogui.hotkey(MODIFIER_KEY, "v")
 
 
-@app.get("/")
-async def serve_index():
-    return FileResponse("static/index.html")
-
-
-@app.get("/tokens")
-async def get_tokens(request: Request):
-    return {"total_used": request.app.state.total_tokens}
-
-
-@app.post("/chat")
-async def process_chat(request_data: ChatRequest, request: Request):
-    state = request.app.state
-    if not state.session_images and not request_data.message:
-        return {
-            "response": "System Error: Prompt or context required.",
-            "total_tokens": state.total_tokens,
-        }
-
-    answer, tokens_used = analyze_screen(
-        request_data.message, state.session_images, request_data.model_tier
-    )
-    state.total_tokens += tokens_used
-    state.session_images.clear()
-    return {"response": answer, "total_tokens": state.total_tokens}
-
-
 @app.websocket("/stream")
 async def capture_on_demand(websocket: WebSocket):
+    global global_config
     await websocket.accept()
-    p_queue: queue.Queue = websocket.app.state.prompter_queue
-    config: dict = websocket.app.state.shared_config
 
     try:
         while True:
@@ -226,15 +165,16 @@ async def capture_on_demand(websocket: WebSocket):
                     new_config = json.loads(event.text)
                     with open(LOCAL_PRESET_FILE, "w", encoding="utf-8") as f:
                         json.dump(new_config, f)
-
-                    config.update(new_config)
-                    p_queue.put({"action": "PROMPTER_CONFIG", "config": new_config})
+                    global_config.update(new_config)
+                    global_queue.put(
+                        {"action": "PROMPTER_CONFIG", "config": new_config}
+                    )
                 except Exception as e:
-                    print("Config Save Failed:", e)
+                    pass
 
             elif event.action == "CAPTURE":
                 img, buffer = await asyncio.to_thread(_sync_capture)
-                websocket.app.state.session_images.append(img)
+                session_images.append(img)
                 await websocket.send_bytes(buffer.getvalue())
 
             elif event.action == "EXTRACT_TEXT":
@@ -247,13 +187,40 @@ async def capture_on_demand(websocket: WebSocket):
                 await asyncio.to_thread(_sync_paste, event.text)
 
             elif event.action.startswith("PROMPTER_"):
-                p_queue.put({"action": event.action, "text": event.text})
+                global_queue.put({"action": event.action, "text": event.text})
 
     except WebSocketDisconnect:
         pass
-    except Exception as e:
-        print(f"Stream Interface Degraded: {e}")
-        pass
+
+
+# --- DISPOSABLE SERVER MANAGER ---
+class UvicornManager:
+    """Safely spawns and slaughters the ASGI server to free system ports."""
+
+    def __init__(self, target_port):
+        self.port = target_port
+        self.server = None
+        self.thread = None
+
+    def start(self):
+        if self.server is None:
+            # We enforce loop="asyncio" and suppress logging headers to avoid threading crashes
+            log_config = None if sys.stdout is None else uvicorn.config.LOGGING_CONFIG
+            config = uvicorn.Config(
+                app,
+                host="0.0.0.0",
+                port=self.port,
+                log_config=log_config,
+                loop="asyncio",
+            )
+            self.server = uvicorn.Server(config)
+            self.thread = threading.Thread(target=self.server.run, daemon=True)
+            self.thread.start()
+
+    def stop(self):
+        if self.server:
+            self.server.should_exit = True
+            self.server = None
 
 
 def get_local_ip() -> str:
@@ -265,16 +232,80 @@ def get_local_ip() -> str:
             return "127.0.0.1"
 
 
+# --- MAIN EXECUTION ---
 if __name__ == "__main__":
-    port = 8000
-    local_ip = get_local_ip()
-    target_url = f"http://{local_ip}:{port}"
+    port = 58432
+    api_manager = UvicornManager(port)
+    api_manager.start()
 
-    print("\n[SYSTEM] Peacock Engine Initialized")
-    print(f"\nDashboard URL: {target_url}\n")
-    qr = qrcode.QRCode(version=1, box_size=1, border=2)
-    qr.add_data(target_url)
-    qr.make(fit=True)
-    qr.print_ascii(invert=True)
-    print("\nStarting Uvicorn ASGI Server...\n")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    if sys.stdout is not None:
+        local_ip = get_local_ip()
+        target_url = f"http://{local_ip}:{port}"
+        print("\n[SYSTEM] Peacock Engine Initialized")
+        print(f"\nDashboard URL: {target_url}\n")
+        qr = qrcode.QRCode(version=1, box_size=1, border=2)
+        qr.add_data(target_url)
+        qr.make(fit=True)
+        qr.print_ascii(invert=True)
+
+    # --- TELEPROMPTER LOGIC ---
+    local_image_buffer = []
+
+    def handle_capture():
+        try:
+            img, _ = _sync_capture()
+            local_image_buffer.append(img)
+            global_queue.put(
+                {"action": "PROMPTER_BUFFER_UPDATE", "count": len(local_image_buffer)}
+            )
+        except Exception:
+            pass
+
+    def handle_analyze(prompt_text, model_tier):
+        global_queue.put(
+            {
+                "action": "PROMPTER_SYNC",
+                "text": f"[ Processing with {model_tier.upper()} mode... ]",
+            }
+        )
+        try:
+            images_to_analyze = []
+            if len(local_image_buffer) > 0:
+                images_to_analyze = list(local_image_buffer)
+                local_image_buffer.clear()
+                global_queue.put({"action": "PROMPTER_BUFFER_UPDATE", "count": 0})
+            else:
+                img, _ = _sync_capture()
+                images_to_analyze = [img]
+
+            answer, tokens = analyze_screen(prompt_text, images_to_analyze, model_tier)
+            global_queue.put({"action": "PROMPTER_SYNC", "text": answer})
+        except Exception as e:
+            global_queue.put(
+                {"action": "PROMPTER_SYNC", "text": f"[ Analysis Failed: {str(e)} ]"}
+            )
+
+    def handle_network_toggle(is_online: bool):
+        if is_online:
+            api_manager.start()
+            global_queue.put(
+                {"action": "PROMPTER_SYNC", "text": "[ Local Network Socket: OPEN ]"}
+            )
+        else:
+            api_manager.stop()
+            global_queue.put(
+                {"action": "PROMPTER_SYNC", "text": "[ Local Network Socket: CLOSED ]"}
+            )
+
+    root = tk.Tk()
+    app_ui = StealthTeleprompter(
+        root,
+        global_queue,
+        global_config,
+        on_analyze_callback=handle_analyze,
+        on_capture_callback=handle_capture,
+        on_network_toggle=handle_network_toggle,
+    )
+
+    # Run Tkinter directly on the main thread to ensure absolute OS stability
+    root.mainloop()
