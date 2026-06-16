@@ -1,9 +1,10 @@
 import tkinter as tk
 import ctypes
 import sys
-import keyboard
 import queue
 import threading
+import json
+import os
 import re
 
 # --- Windows API Constants ---
@@ -11,8 +12,10 @@ SW_HIDE = 0
 SW_SHOWNOACTIVATE = 4
 WDA_EXCLUDEFROMCAPTURE = 17
 GWL_EXSTYLE = -20
-WS_EX_TRANSPARENT = 0x00000020
 WS_EX_NOACTIVATE = 0x08000000
+WS_EX_TOOLWINDOW = 0x00000080  # Prevents Alt-Tab and Taskbar visibility
+
+STATE_FILE = "peacock_state.json"
 
 
 class StealthTeleprompter:
@@ -29,28 +32,52 @@ class StealthTeleprompter:
         self.config = config
         self.on_analyze = on_analyze_callback
         self.on_capture = on_capture_callback
-        self.key_buffer = []
 
-        self.is_visible = True
-        self.is_dark_mode = True
-        self.is_intangible = False
         self.current_model = "fast"
+        self.saved_state = self._load_state()
 
-        self.history = ["[ Awaiting Live Sync... ]"]
-        self.history_idx = 0
-
-        self._drag_start_x = 0
-        self._drag_start_y = 0
-        self._resize_start_x = 0
-        self._resize_start_y = 0
-        self._resize_start_w = 0
-        self._resize_start_h = 0
+        # Load dynamic state variables
+        self.is_dark_mode = self.saved_state.get("is_dark_mode", True)
+        self.is_minimized = self.saved_state.get("is_minimized", False)
+        self.history = self.saved_state.get("history", ["-> <3"])
+        self.history_idx = self.saved_state.get("history_idx", len(self.history) - 1)
 
         self._initialize_ui()
-        self._apply_stealth_mechanics()
+        self._initialize_icon_window()
+        self._apply_stealth_mechanics(self.root)
         self._bind_events()
 
-        self.root.after(50, self._process_queue)
+        # Render initial history payload with proper Markdown
+        self._render_markdown(self.history[self.history_idx])
+        self._apply_colors()
+
+        # Micro-delay to ensure window handles are established by the OS before hiding/showing
+        self.root.after(50, self._apply_initial_visibility)
+        self.root.after(100, self._process_queue)
+
+    def _load_state(self):
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, "r") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_state(self):
+        state = {
+            "main_geo": self.root.geometry(),
+            "icon_geo": self.icon_root.geometry(),
+            "is_dark_mode": self.is_dark_mode,
+            "is_minimized": self.is_minimized,
+            "history": self.history[-50:],  # Cap history to prevent memory bloat
+            "history_idx": self.history_idx,
+        }
+        try:
+            with open(STATE_FILE, "w") as f:
+                json.dump(state, f)
+        except Exception:
+            pass
 
     def _process_queue(self):
         try:
@@ -63,149 +90,137 @@ class StealthTeleprompter:
                     if text != self.history[-1]:
                         self.history.append(text)
                         self.history_idx = len(self.history) - 1
+                        self._save_state()
                     self._render_markdown(text)
                 elif action == "PROMPTER_CLEAR":
                     self._render_markdown("")
                 elif action == "PROMPTER_HIDE":
-                    self._hide()
+                    self._minimize_to_icon()
                 elif action == "PROMPTER_SHOW":
-                    self._reveal()
-                elif action == "PROMPTER_LOCK":
-                    self._make_intangible()
-                elif action == "PROMPTER_UNLOCK":
-                    self._make_solid()
+                    self._restore_from_icon()
                 elif action == "PROMPTER_THEME":
                     self._toggle_theme()
                 elif action == "PROMPTER_CONFIG":
                     self.config = msg.get("config", self.config)
-                    self._apply_config_ui()
+                    self._rebuild_presets()
                 elif action == "PROMPTER_BUFFER_UPDATE":
-                    count = msg.get("count", 0)
-                    self.btn_plus.configure(text=f"➕ ({count})" if count > 0 else "➕")
-
+                    self._update_buffer_count(msg.get("count", 0))
         except queue.Empty:
             pass
-
         self.root.after(50, self._process_queue)
 
     def _initialize_ui(self):
-        self.root.geometry("650x400")
-        self.root.attributes("-toolwindow", True)
+        self.root.geometry(self.saved_state.get("main_geo", "650x400+200+200"))
         self.root.overrideredirect(True)
-        self.root.attributes("-alpha", 0.85)
         self.root.attributes("-topmost", True)
+        self.root.configure(bg="#111111")
 
-        # --- TOP CONTROL BAR ---
-        self.top_bar = tk.Frame(self.root, height=35)
+        # Top Bar
+        self.top_bar = tk.Frame(self.root, height=35, bg="#111111")
         self.top_bar.pack(side="top", fill="x")
         self.top_bar.pack_propagate(False)
 
-        # Left Group: Nav & Model Toggle
-        self.btn_prev = tk.Button(
-            self.top_bar,
-            text="◄",
-            font=("Arial", 10, "bold"),
-            bd=0,
-            cursor="hand2",
-            command=self._history_prev,
-        )
-        self.btn_prev.pack(side="left", padx=(5, 2), pady=5)
+        # --- LEFT SUB-FRAME ---
+        self.left_frame = tk.Frame(self.top_bar, bg="#111111")
+        self.left_frame.pack(side="left", fill="y")
 
-        self.btn_next = tk.Button(
-            self.top_bar,
-            text="►",
-            font=("Arial", 10, "bold"),
-            bd=0,
-            cursor="hand2",
-            command=self._history_next,
-        )
-        self.btn_next.pack(side="left", padx=(0, 5), pady=5)
-
-        # Removed the invalid 'title' argument here
+        tk.Button(
+            self.left_frame, text="◄", bd=0, takefocus=0, command=self._history_prev
+        ).pack(side="left", padx=(5, 1))
+        tk.Button(
+            self.left_frame, text="►", bd=0, takefocus=0, command=self._history_next
+        ).pack(side="left", padx=1)
         self.btn_model = tk.Button(
-            self.top_bar,
-            text="⚡",
-            font=("Arial", 10),
-            bd=0,
-            cursor="hand2",
-            command=self._toggle_model,
+            self.left_frame, text="⚡", bd=0, takefocus=0, command=self._toggle_model
         )
-        self.btn_model.pack(side="left", padx=2, pady=5)
+        self.btn_model.pack(side="left", padx=2)
 
-        # Right Group: Utilities (Packed right-to-left)
-        self.btn_hide = tk.Button(
-            self.top_bar,
+        # Padding then Broom & Opacity Controls
+        tk.Frame(self.left_frame, width=10, bg="#111111").pack(side="left")
+        tk.Button(
+            self.left_frame,
+            text="🧹",
+            bd=0,
+            takefocus=0,
+            command=lambda: self._render_markdown(""),
+        ).pack(side="left", padx=2)
+        tk.Button(
+            self.left_frame,
+            text="🌗",
+            bd=0,
+            takefocus=0,
+            font=("Arial", 10),
+            command=lambda: self._set_opacity(0.50),
+        ).pack(side="left", padx=2)
+        tk.Button(
+            self.left_frame,
+            text="🌑",
+            bd=0,
+            takefocus=0,
+            font=("Arial", 10),
+            command=lambda: self._set_opacity(0.85),
+        ).pack(side="left", padx=2)
+
+        # --- RIGHT SUB-FRAME ---
+        self.right_frame = tk.Frame(self.top_bar, bg="#111111")
+        self.right_frame.pack(side="right", fill="y")
+
+        tk.Button(
+            self.right_frame,
             text="✖",
-            font=("Arial", 10),
             bd=0,
-            cursor="hand2",
-            command=self._hide,
-        )
-        self.btn_hide.pack(side="right", padx=(2, 5), pady=5)
+            takefocus=0,
+            command=self._minimize_to_icon,
+        ).pack(side="right", padx=(2, 5))
+        tk.Button(
+            self.right_frame, text="🌓", bd=0, takefocus=0, command=self._toggle_theme
+        ).pack(side="right", padx=2)
 
-        self.btn_theme = tk.Button(
-            self.top_bar,
-            text="🌓",
-            font=("Arial", 10),
-            bd=0,
-            cursor="hand2",
-            command=self._toggle_theme,
-        )
-        self.btn_theme.pack(side="right", padx=2, pady=5)
-
-        self.btn_analyze = tk.Button(
-            self.top_bar,
-            text="✨",
-            font=("Arial", 10),
-            bd=0,
-            cursor="hand2",
-            command=self._trigger_analyze,
-        )
-        self.btn_analyze.pack(side="right", padx=2, pady=5)
-
-        # Right Group: The 4 Presets
-        self.preset_btns = []
-        for i in reversed(range(4)):
-            btn = tk.Button(
-                self.top_bar, text="?", font=("Arial", 10), bd=0, cursor="hand2"
-            )
-            btn.pack(side="right", padx=1, pady=5)
-            self.preset_btns.insert(0, btn)  # Maintain visual left-to-right 0-3 order
-
-        # Right Group: Batch Capture
-        self.btn_plus = tk.Button(
-            self.top_bar,
-            text="➕",
-            font=("Arial", 10),
-            bd=0,
-            cursor="hand2",
-            command=self._trigger_capture,
-        )
-        self.btn_plus.pack(side="right", padx=(2, 5), pady=5)
-
-        # Center: Drag Handle (Updated Text)
-        self.drag_handle = tk.Label(
-            self.top_bar,
+        self.lbl_buffer = tk.Label(
+            self.right_frame,
             text="",
+            bg="#111111",
+            fg="#00FF00",
             font=("Arial", 8, "bold"),
-            cursor="fleur",
+            takefocus=0,
         )
-        self.drag_handle.pack(side="left", fill="both", expand=True)
+        self.lbl_buffer.pack(side="right", padx=1)
+        tk.Button(
+            self.right_frame,
+            text="➕",
+            bd=0,
+            takefocus=0,
+            command=self._trigger_capture,
+        ).pack(side="right", padx=1)
 
-        # --- MAIN CONTENT AREA ---
-        self.content_frame = tk.Frame(self.root)
-        self.content_frame.pack(side="top", fill="both", expand=True, padx=15, pady=10)
+        tk.Button(
+            self.right_frame,
+            text="✨",
+            bd=0,
+            takefocus=0,
+            command=self._trigger_analyze,
+        ).pack(side="right", padx=2)
 
+        tk.Frame(self.right_frame, width=15, bg="#111111").pack(side="right")
+
+        self.preset_frame = tk.Frame(self.right_frame, bg="#111111")
+        self.preset_frame.pack(side="right", fill="y")
+
+        # --- TEXT AREA ---
         self.text_area = tk.Text(
-            self.content_frame,
+            self.root,
             wrap="word",
             font=("Segoe UI", 12),
             bd=0,
             highlightthickness=0,
+            bg="#111111",
+            fg="#E0E0E0",
+            takefocus=0,
             cursor="arrow",
         )
-        self.text_area.pack(side="left", fill="both", expand=True)
+        self.text_area.pack(side="top", fill="both", expand=True, padx=10, pady=10)
 
+        # Re-inject Markdown Tag Configurations
         self.text_area.tag_configure(
             "h1", font=("Segoe UI", 18, "bold"), spacing1=10, spacing3=5
         )
@@ -222,30 +237,140 @@ class StealthTeleprompter:
         )
         self.text_area.tag_configure("bullet", font=("Segoe UI", 14, "bold"))
 
-        # --- RESIZE GRIP ---
         self.resize_grip = tk.Label(
-            self.root, text="◢", font=("Arial", 10), cursor="size_nw_se"
+            self.root, text="◢", bg="#111111", fg="gray", cursor="size_nw_se"
         )
         self.resize_grip.place(relx=1.0, rely=1.0, anchor="se")
 
-        self._apply_config_ui()
-        self._apply_colors()
-        self._render_markdown(self.history[0])
+        self._rebuild_presets()
 
-    def _apply_config_ui(self):
+    def _update_buffer_count(self, count):
+        if count > 0:
+            self.lbl_buffer.config(text=f"[{count}]")
+        else:
+            self.lbl_buffer.config(text="")
+
+    def _rebuild_presets(self):
+        for widget in self.preset_frame.winfo_children():
+            widget.destroy()
+
         presets = self.config.get("presets", [])
-        for i, btn in enumerate(self.preset_btns):
-            if i < len(presets):
-                btn.configure(text=presets[i]["emoji"])
-                # Captures the variable securely in the lambda closure
-                btn.configure(
-                    command=lambda p=presets[i]["text"]: self._trigger_analyze(p)
-                )
-            else:
-                btn.configure(text="")
-                btn.configure(command=lambda: None)
+        for p in presets:
+            emoji = p.get("emoji", "❓")
+            text = p.get("text", "")
+            btn = tk.Button(
+                self.preset_frame,
+                text=emoji,
+                bd=0,
+                takefocus=0,
+                command=lambda t=text: self._trigger_analyze(t),
+            )
+            btn.pack(side="left", padx=2)
+        self._apply_colors()
+
+    def _set_opacity(self, value):
+        self.root.attributes("-alpha", value)
+
+    def _initialize_icon_window(self):
+        self.icon_root = tk.Toplevel(self.root)
+        self.icon_root.geometry(self.saved_state.get("icon_geo", "50x50+1800+50"))
+        self.icon_root.overrideredirect(True)
+        self.icon_root.attributes("-topmost", True)
+
+        chroma_key = "#000001"
+        self.icon_root.configure(bg=chroma_key)
+        if sys.platform == "win32":
+            self.icon_root.wm_attributes("-transparentcolor", chroma_key)
+
+        self.peacock_lbl = tk.Label(
+            self.icon_root,
+            text="🦚",
+            font=("Segoe UI Emoji", 28),
+            bg=chroma_key,
+            fg="white",
+            cursor="hand2",
+            takefocus=0,
+        )
+        self.peacock_lbl.pack()
+
+        self.peacock_lbl.bind("<ButtonPress-1>", self._on_icon_press)
+        self.peacock_lbl.bind("<B1-Motion>", self._on_icon_motion)
+        self.peacock_lbl.bind("<ButtonRelease-1>", self._on_icon_release)
+
+        if sys.platform == "win32":
+            ctypes.windll.user32.ShowWindow(int(self.icon_root.wm_frame(), 16), SW_HIDE)
+        else:
+            self.icon_root.withdraw()
+
+        self._apply_stealth_mechanics(self.icon_root)
+
+    def _apply_initial_visibility(self):
+        if self.is_minimized:
+            self._minimize_to_icon()
+        else:
+            self._restore_from_icon()
+
+    def _on_icon_press(self, e):
+        self._icon_drag_start_x = e.x_root
+        self._icon_drag_start_y = e.y_root
+        self._icon_win_start_x = self.icon_root.winfo_x()
+        self._icon_win_start_y = self.icon_root.winfo_y()
+        self._icon_moved = False
+        return "break"
+
+    def _on_icon_motion(self, e):
+        if (
+            abs(e.x_root - self._icon_drag_start_x) > 3
+            or abs(e.y_root - self._icon_drag_start_y) > 3
+        ):
+            self._icon_moved = True
+            x = self._icon_win_start_x + (e.x_root - self._icon_drag_start_x)
+            y = self._icon_win_start_y + (e.y_root - self._icon_drag_start_y)
+            self.icon_root.geometry(f"+{x}+{y}")
+
+    def _on_icon_release(self, e):
+        if self._icon_moved:
+            self._save_state()
+            self._icon_moved = False
+        else:
+            self._restore_from_icon()
+
+    def _apply_stealth_mechanics(self, window):
+        window.update()
+        hwnd = int(window.wm_frame(), 16)
+        if sys.platform == "win32":
+            ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+            ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ctypes.windll.user32.SetWindowLongW(
+                hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+            )
+
+    def _minimize_to_icon(self):
+        self.is_minimized = True
+        self._save_state()
+        if sys.platform == "win32":
+            ctypes.windll.user32.ShowWindow(int(self.root.wm_frame(), 16), SW_HIDE)
+            ctypes.windll.user32.ShowWindow(
+                int(self.icon_root.wm_frame(), 16), SW_SHOWNOACTIVATE
+            )
+        else:
+            self.root.withdraw()
+            self.icon_root.deiconify()
+
+    def _restore_from_icon(self):
+        self.is_minimized = False
+        self._save_state()
+        if sys.platform == "win32":
+            ctypes.windll.user32.ShowWindow(int(self.icon_root.wm_frame(), 16), SW_HIDE)
+            ctypes.windll.user32.ShowWindow(
+                int(self.root.wm_frame(), 16), SW_SHOWNOACTIVATE
+            )
+        else:
+            self.icon_root.withdraw()
+            self.root.deiconify()
 
     def _render_markdown(self, text):
+        """Restored RESTORED Rich Markdown Parser"""
         self.text_area.config(state="normal")
         self.text_area.delete(1.0, tk.END)
 
@@ -259,7 +384,6 @@ class StealthTeleprompter:
             if in_code_block:
                 self.text_area.insert(tk.END, line + "\n", "code")
                 continue
-
             if line.startswith("# "):
                 self.text_area.insert(tk.END, line[2:] + "\n", "h1")
                 continue
@@ -296,19 +420,17 @@ class StealthTeleprompter:
         if self.history_idx > 0:
             self.history_idx -= 1
             self._render_markdown(self.history[self.history_idx])
+            self._save_state()
 
     def _history_next(self):
         if self.history_idx < len(self.history) - 1:
             self.history_idx += 1
             self._render_markdown(self.history[self.history_idx])
+            self._save_state()
 
     def _toggle_model(self):
-        if self.current_model == "fast":
-            self.current_model = "deep"
-            self.btn_model.configure(text="🧠")
-        else:
-            self.current_model = "fast"
-            self.btn_model.configure(text="⚡")
+        self.current_model = "deep" if self.current_model == "fast" else "fast"
+        self.btn_model.configure(text="🧠" if self.current_model == "deep" else "⚡")
 
     def _trigger_capture(self):
         if self.on_capture:
@@ -316,9 +438,7 @@ class StealthTeleprompter:
 
     def _trigger_analyze(self, prompt_text=None):
         if prompt_text is None:
-            prompt_text = self.config.get(
-                "auto_prompt", "Analyze this screen and provide key takeaways."
-            )
+            prompt_text = self.config.get("auto_prompt", "Analyze this screen.")
         if self.on_analyze:
             threading.Thread(
                 target=self.on_analyze,
@@ -327,138 +447,91 @@ class StealthTeleprompter:
             ).start()
 
     def _apply_colors(self):
-        if self.is_intangible:
-            self.text_area.config(fg="#00FF00")
-            return
+        bg, fg = ("#111111", "#E0E0E0") if self.is_dark_mode else ("#F5F5F5", "#111111")
+        btn_bg = "#222222" if self.is_dark_mode else "#E0E0E0"
 
-        bg_color, fg_color, top_bg = (
-            ("black", "#E0E0E0", "#111111")
-            if self.is_dark_mode
-            else ("#F5F5F5", "#111111", "#E0E0E0")
-        )
+        self.root.configure(bg=bg)
+        self.top_bar.configure(bg=bg)
 
-        self.root.configure(bg=bg_color)
-        self.content_frame.configure(bg=bg_color)
-        self.text_area.configure(bg=bg_color, fg=fg_color, insertbackground=bg_color)
+        for frame in [self.left_frame, self.right_frame, self.preset_frame]:
+            frame.configure(bg=bg)
+            for child in frame.winfo_children():
+                if isinstance(child, tk.Button):
+                    child.configure(bg=btn_bg, fg=fg)
+                elif isinstance(child, tk.Frame) or isinstance(child, tk.Label):
+                    child.configure(bg=bg)
 
-        self.top_bar.configure(bg=top_bg)
-        self.drag_handle.configure(bg=top_bg, fg=fg_color)
-        self.resize_grip.configure(bg=bg_color, fg=fg_color)
-
-        buttons = [
-            self.btn_prev,
-            self.btn_next,
-            self.btn_model,
-            self.btn_plus,
-            self.btn_analyze,
-            self.btn_theme,
-            self.btn_hide,
-        ] + self.preset_btns
-        for btn in buttons:
-            btn.configure(
-                bg=top_bg,
-                fg=fg_color,
-                activebackground=bg_color,
-                activeforeground=fg_color,
-            )
+        self.lbl_buffer.configure(bg=bg, fg="#00FF00")
+        self.text_area.configure(bg=bg, fg=fg)
 
     def _toggle_theme(self):
         self.is_dark_mode = not self.is_dark_mode
         self._apply_colors()
-
-    def _apply_stealth_mechanics(self):
-        self.root.update()
-        self.hwnd = int(self.root.wm_frame(), 16)
-        if sys.platform == "win32":
-            ctypes.windll.user32.SetWindowDisplayAffinity(
-                self.hwnd, WDA_EXCLUDEFROMCAPTURE
-            )
-            ex_style = ctypes.windll.user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
-            ctypes.windll.user32.SetWindowLongW(
-                self.hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE
-            )
+        self._save_state()
 
     def _bind_events(self):
-        self.drag_handle.bind("<Button-1>", self._on_drag_start)
-        self.drag_handle.bind("<B1-Motion>", self._on_drag_motion)
-        self.resize_grip.bind("<Button-1>", self._on_resize_start)
+        # 1. Bind passive surfaces
+        passive_surfaces = [
+            self.root,
+            self.top_bar,
+            self.left_frame,
+            self.right_frame,
+            self.preset_frame,
+        ]
+
+        for widget in passive_surfaces:
+            widget.bind("<ButtonPress-1>", self._on_drag_start)
+            widget.bind("<B1-Motion>", self._on_drag_motion)
+            widget.bind("<ButtonRelease-1>", lambda e: self._save_state())
+
+        # 2. Bind aggressive surfaces (Text Area) with explicit event annihilation
+        self.text_area.bind("<ButtonPress-1>", self._on_text_drag_start)
+        self.text_area.bind("<B1-Motion>", self._on_drag_motion)
+        self.text_area.bind("<ButtonRelease-1>", lambda e: self._save_state())
+
+        self.resize_grip.bind("<ButtonPress-1>", self._on_resize_start)
         self.resize_grip.bind("<B1-Motion>", self._on_resize_motion)
+        self.resize_grip.bind("<ButtonRelease-1>", lambda e: self._save_state())
 
+        # RESTORED: Manual Scroll Event Routing
         self.text_area.bind("<MouseWheel>", self._on_mousewheel)
-        self.drag_handle.bind("<MouseWheel>", self._on_mousewheel)
+        for frame in [
+            self.root,
+            self.top_bar,
+            self.left_frame,
+            self.right_frame,
+            self.preset_frame,
+        ]:
+            frame.bind("<MouseWheel>", self._on_mousewheel)
 
-        self.root.bind("<Escape>", self._shutdown)
-        keyboard.hook(self._on_global_key)
+    # --- ABSOLUTE EVENT ROUTING ---
+    def _on_text_drag_start(self, e):
+        self._on_drag_start(e)
+        return "break"
 
-    def _on_drag_start(self, event):
-        self._drag_start_x = event.x
-        self._drag_start_y = event.y
+    def _on_drag_start(self, e):
+        self._drag_start_x = e.x_root
+        self._drag_start_y = e.y_root
+        self._win_start_x = self.root.winfo_x()
+        self._win_start_y = self.root.winfo_y()
 
-    def _on_drag_motion(self, event):
-        x = self.root.winfo_x() - self._drag_start_x + event.x
-        y = self.root.winfo_y() - self._drag_start_y + event.y
+    def _on_drag_motion(self, e):
+        x = self._win_start_x + (e.x_root - self._drag_start_x)
+        y = self._win_start_y + (e.y_root - self._drag_start_y)
         self.root.geometry(f"+{x}+{y}")
 
-    def _on_resize_start(self, event):
-        self._resize_start_x = event.x_root
-        self._resize_start_y = event.y_root
+    def _on_resize_start(self, e):
+        self._resize_start_x = e.x_root
+        self._resize_start_y = e.y_root
         self._resize_start_w = self.root.winfo_width()
         self._resize_start_h = self.root.winfo_height()
 
-    def _on_resize_motion(self, event):
-        new_w = max(350, self._resize_start_w + (event.x_root - self._resize_start_x))
-        new_h = max(200, self._resize_start_h + (event.y_root - self._resize_start_y))
-        self.root.geometry(f"{new_w}x{new_h}")
+    def _on_resize_motion(self, e):
+        w = max(350, self._resize_start_w + (e.x_root - self._resize_start_x))
+        h = max(200, self._resize_start_h + (e.y_root - self._resize_start_y))
+        self.root.geometry(f"{w}x{h}")
 
-    def _on_mousewheel(self, event):
-        self.text_area.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    def _on_global_key(self, event):
-        if event.event_type == keyboard.KEY_DOWN and len(event.name) == 1:
-            self.key_buffer.append(event.name.lower())
-            if len(self.key_buffer) > 4:
-                self.key_buffer.pop(0)
-            seq = "".join(self.key_buffer)
-
-            if seq == "asdf" and not self.is_visible:
-                self.root.after(0, self._reveal)
-            elif seq == "fdsa" and self.is_visible:
-                self.root.after(0, self._hide)
-            elif seq == "zxcv" and self.is_visible and not self.is_intangible:
-                self.root.after(0, self._make_intangible)
-            elif seq == "vcxz" and self.is_visible and self.is_intangible:
-                self.root.after(0, self._make_solid)
-
-    def _reveal(self):
-        if sys.platform == "win32":
-            ctypes.windll.user32.ShowWindow(self.hwnd, SW_SHOWNOACTIVATE)
-            self.is_visible = True
-
-    def _hide(self):
-        if sys.platform == "win32":
-            ctypes.windll.user32.ShowWindow(self.hwnd, SW_HIDE)
-            self.is_visible = False
-
-    def _make_intangible(self):
-        if sys.platform == "win32":
-            ex_style = (
-                ctypes.windll.user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
-                | WS_EX_TRANSPARENT
-            )
-            ctypes.windll.user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style)
-            self.is_intangible = True
-            self._apply_colors()
-
-    def _make_solid(self):
-        if sys.platform == "win32":
-            ex_style = (
-                ctypes.windll.user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE)
-                & ~WS_EX_TRANSPARENT
-            )
-            ctypes.windll.user32.SetWindowLongW(self.hwnd, GWL_EXSTYLE, ex_style)
-            self.is_intangible = False
-            self._apply_colors()
-
-    def _shutdown(self, event=None):
-        keyboard.unhook_all()
-        self.root.destroy()
+    # RESTORED: Mousewheel logic
+    def _on_mousewheel(self, e):
+        self.text_area.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        return "break"
