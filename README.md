@@ -1,5 +1,5 @@
 
-# Peacock: Multi-Threaded Remote Command & Analysis Daemon
+# 🦚 Peacock: Multi-Threaded Remote Command & Analysis Daemon
 
 Peacock is a low latency, non-intrusive desktop capture system paired with a mobile-first management dashboard. Peacock interfaces directly with the Windows OS subsystem to achieve true background invisibility. It allows users to stream GPU framebuffer contexts to remote devices for real-time multi-modal AI analysis without disrupting foreground interactions, breaking application focus, or alerting native window event loops.
 
