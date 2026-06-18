@@ -246,7 +246,6 @@ def get_local_ip() -> str:
             return "127.0.0.1"
 
 
-# --- MAIN EXECUTION ---
 if __name__ == "__main__":
     port = 58432
     api_manager = UvicornManager(port)
@@ -262,7 +261,6 @@ if __name__ == "__main__":
         qr.make(fit=True)
         qr.print_ascii(invert=True)
 
-    # --- TELEPROMPTER LOGIC ---
     local_image_buffer = []
 
     def handle_capture():
@@ -321,4 +319,19 @@ if __name__ == "__main__":
         on_network_toggle=handle_network_toggle,
     )
 
-    root.mainloop()
+    def safe_shutdown():
+        """Cleanly stops the server and destroys the GUI."""
+        if sys.stdout is not None:
+            print("\n[SYSTEM] Commencing graceful shutdown...")
+        api_manager.stop()
+        root.quit()
+
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        safe_shutdown()
+    finally:
+        safe_shutdown()
+        if sys.stdout is not None:
+            print("[SYSTEM] Peacock Engine Offline.\n")
+        sys.exit(0)

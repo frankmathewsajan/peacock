@@ -6,7 +6,7 @@ import threading
 import json
 import os
 import re
-import gc  # Added for aggressive memory management
+import gc  # Aggressive memory management
 
 # --- Windows API Constants ---
 SW_HIDE = 0
@@ -27,7 +27,7 @@ class StealthTeleprompter:
         config: dict,
         on_analyze_callback=None,
         on_capture_callback=None,
-        on_network_toggle=None,  # New callback for the Uvicorn server
+        on_network_toggle=None,
     ):
         self.root = root
         self.q = command_queue
@@ -160,7 +160,7 @@ class StealthTeleprompter:
             command=lambda: self._set_opacity(0.85),
         ).pack(side="left", padx=2)
 
-        # --- NEW: Network Toggle Button ---
+        # Network Toggle Button
         tk.Frame(self.left_frame, width=10, bg="#111111").pack(side="left")
         self.btn_net = tk.Button(
             self.left_frame,
@@ -288,6 +288,10 @@ class StealthTeleprompter:
 
     def _set_opacity(self, value):
         self.root.attributes("-alpha", value)
+        # Re-weld OS armor in case Windows strips it during transparency calculation
+        self.root.update()
+        self._apply_stealth_mechanics(self.root)
+        self._save_state()
 
     def _initialize_icon_window(self):
         self.icon_root = tk.Toplevel(self.root)
@@ -345,6 +349,7 @@ class StealthTeleprompter:
             x = self._icon_win_start_x + (e.x_root - self._icon_drag_start_x)
             y = self._icon_win_start_y + (e.y_root - self._icon_drag_start_y)
             self.icon_root.geometry(f"+{x}+{y}")
+        return "break"
 
     def _on_icon_release(self, e):
         if self._icon_moved:
@@ -352,6 +357,7 @@ class StealthTeleprompter:
             self._icon_moved = False
         else:
             self._restore_from_icon()
+        return "break"
 
     def _apply_stealth_mechanics(self, window):
         window.update()
@@ -375,6 +381,9 @@ class StealthTeleprompter:
             self.root.withdraw()
             self.icon_root.deiconify()
 
+        # FIX: Re-weld OS armor in case the un-hide operation reset DWM memory states
+        self._apply_stealth_mechanics(self.icon_root)
+
         # AGGRESSIVE MEMORY MANAGEMENT: Flush RAM when hiding to save resources 24/7
         gc.collect()
 
@@ -389,6 +398,9 @@ class StealthTeleprompter:
         else:
             self.icon_root.withdraw()
             self.root.deiconify()
+
+        # FIX: Re-weld OS armor in case the un-hide operation reset DWM memory states
+        self._apply_stealth_mechanics(self.root)
 
     def _render_markdown(self, text):
         self.text_area.config(state="normal")
@@ -497,6 +509,7 @@ class StealthTeleprompter:
             self.right_frame,
             self.preset_frame,
         ]
+
         for widget in passive_surfaces:
             widget.bind("<ButtonPress-1>", self._on_drag_start)
             widget.bind("<B1-Motion>", self._on_drag_motion)
@@ -510,10 +523,10 @@ class StealthTeleprompter:
         self.resize_grip.bind("<B1-Motion>", self._on_resize_motion)
         self.resize_grip.bind("<ButtonRelease-1>", lambda e: self._save_state())
 
-        self.text_area.bind("<MouseWheel>", self._on_mousewheel)
-        for frame in passive_surfaces:
-            frame.bind("<MouseWheel>", self._on_mousewheel)
+        # FIX: Apply global mousewheel bind so dynamic preset buttons don't act as scroll black holes
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel)
 
+    # --- ABSOLUTE EVENT ROUTING ---
     def _on_text_drag_start(self, e):
         self._on_drag_start(e)
         return "break"
@@ -523,22 +536,26 @@ class StealthTeleprompter:
         self._drag_start_y = e.y_root
         self._win_start_x = self.root.winfo_x()
         self._win_start_y = self.root.winfo_y()
+        return "break"  # Murders native focus steal
 
     def _on_drag_motion(self, e):
         x = self._win_start_x + (e.x_root - self._drag_start_x)
         y = self._win_start_y + (e.y_root - self._drag_start_y)
         self.root.geometry(f"+{x}+{y}")
+        return "break"  # Prevents event bubbling chaos
 
     def _on_resize_start(self, e):
         self._resize_start_x = e.x_root
         self._resize_start_y = e.y_root
         self._resize_start_w = self.root.winfo_width()
         self._resize_start_h = self.root.winfo_height()
+        return "break"  # Murders native focus steal
 
     def _on_resize_motion(self, e):
         w = max(350, self._resize_start_w + (e.x_root - self._resize_start_x))
         h = max(200, self._resize_start_h + (e.y_root - self._resize_start_y))
         self.root.geometry(f"{w}x{h}")
+        return "break"  # Stops resize events from triggering drag events
 
     def _on_mousewheel(self, e):
         self.text_area.yview_scroll(int(-1 * (e.delta / 120)), "units")
